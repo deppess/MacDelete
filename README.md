@@ -13,6 +13,8 @@ delete <app>                      # show the plan, ask once, delete
 sudo delete <app>                 # when the app or some of its files belong to root
 ```
 
+Press Tab after `delete` to complete app names (with version, source and size), bundle identifiers, paths and options. `Scripts/install` sets this up for fish; for zsh, save `delete completions zsh` as `_delete` in a folder on `$fpath`, and for bash add `eval "$(delete completions bash)"` to your profile.
+
 `<app>` is a name, a bundle identifier, or a path, matched case-insensitively. A unique name prefix is enough, except with `-y`, which needs the full name, identifier or path; anything ambiguous lists the candidates and stops.
 
 ```

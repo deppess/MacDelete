@@ -8,6 +8,7 @@ public enum DeleteCLI {
     Usage:
       delete list [--all] [--json]       Installed apps with size and source
       delete <app> [--dry-run] [-y]      Delete an app and everything it left behind
+      delete completions <fish|zsh|bash> Print a tab-completion script for that shell
 
     <app> is a name, a bundle identifier, or a path; a unique name prefix is enough.
 
@@ -38,6 +39,15 @@ public enum DeleteCLI {
             return EXIT_SUCCESS
         case .version:
             print("delete \(version)")
+            return EXIT_SUCCESS
+        case let .completions(shell):
+            print(Completion.script(for: shell))
+            return EXIT_SUCCESS
+        case let .complete(word):
+            // Spotlight's sizes only: walking bundles Spotlight lacks would slow every Tab.
+            let inventory = Inventory.load(roots: roots, sizes: false, timing: timing)
+            let lines = Completion.lines(Completion.candidates(for: word, applications: inventory.applications))
+            if !lines.isEmpty { print(lines) }
             return EXIT_SUCCESS
         case .list:
             let inventory = Inventory.load(roots: roots, timing: timing)
@@ -211,6 +221,9 @@ struct Invocation {
     enum Command: Equatable {
         case help, version, list
         case remove(String)
+        case completions(CompletionShell)
+        /// The hidden `__complete <word>` the completion scripts call.
+        case complete(String)
     }
 
     var command: Command = .help
@@ -221,6 +234,12 @@ struct Invocation {
     var includeNameMatches = false
 
     init(arguments: [String]) throws {
+        // The word being completed may itself look like an option.
+        if arguments.first == "__complete" {
+            guard arguments.count <= 2 else { throw UsageError("__complete takes one word.") }
+            command = .complete(arguments.count == 2 ? arguments[1] : "")
+            return
+        }
         var positional: [String] = []
         var optionsEnded = false
         for argument in arguments {
@@ -245,6 +264,11 @@ struct Invocation {
             guard positional.count == 1 else { throw UsageError("\"delete list\" takes no app name.") }
             guard !dryRun, !assumeYes, !includeNameMatches else { throw UsageError("--dry-run, -y and --include-name-matches apply to deleting an app.") }
             command = .list
+            return
+        }
+        if first == "completions" && !optionsEnded {
+            guard positional.count == 2, let shell = CompletionShell(rawValue: positional[1]) else { throw UsageError("\"delete completions\" takes one of: fish, zsh, bash.") }
+            command = .completions(shell)
             return
         }
         guard positional.count == 1 else { throw UsageError("Name one app at a time.") }

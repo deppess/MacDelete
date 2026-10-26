@@ -16,6 +16,13 @@ bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
 mkdir -p -- "$destination"
 install -m 755 -- "$bin" "$destination/delete"
 print "Installed $destination/delete ($(du -h "$destination/delete" | cut -f1))."
+
+# Tab completion for fish, which loads it from here by itself. zsh and bash: see the README.
+if [[ -d $HOME/.config/fish ]]; then
+    mkdir -p "$HOME/.config/fish/completions"
+    "$destination/delete" completions fish > "$HOME/.config/fish/completions/delete.fish"
+    print "Installed fish completion: ~/.config/fish/completions/delete.fish (type delete and press Tab)."
+fi
 case ":$PATH:" in
     *":$destination:"*) ;;
     *) print "Note: $destination isn't on your PATH." ;;
