@@ -137,7 +137,7 @@ public struct EvidenceFinder: Sendable {
         specific.skipped.forEach { collector.skip($0.path, $0.reason) }
 
         // Steam games: the game's folder and its manifest, and any desktop shortcut.
-        for finding in SteamGame.findings(for: application, inventory: inventory) { collector.add(finding, exempt: true) }
+        for finding in SteamGame.findings(for: application, inventory: inventory, home: roots.home) { collector.add(finding, exempt: true) }
 
         // Homebrew's zap list: exact for a cask Homebrew installed (brew would delete it too),
         // name evidence from the catalog otherwise.

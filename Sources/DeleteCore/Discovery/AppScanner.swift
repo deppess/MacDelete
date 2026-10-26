@@ -91,7 +91,9 @@ public struct AppScanner: Sendable {
                 if let maxDepth = root.maxDepth, enumerator.level > maxDepth + 1 { enumerator.skipDescendants(); continue }
                 // Symlinked directories are never descended into; only a symlink that is itself an
                 // application bundle (macOS ships /Applications/Safari.app this way) is followed.
-                guard candidate.pathExtension.lowercased() == "app" else { continue }
+                let isFolderBundle = root.extensionlessBundles && enumerator.level == 1 && candidate.pathExtension.lowercased() != "app"
+                    && FileManager.default.fileExists(atPath: candidate.appending(path: "Contents/Info.plist").path)
+                guard candidate.pathExtension.lowercased() == "app" || isFolderBundle else { continue }
                 enumerator.skipDescendants()
                 let isSymbolicLink = (try? candidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                 let normalized = candidate.standardizedFileURL
@@ -161,7 +163,8 @@ public struct AppScanner: Sendable {
         let data = try Data(contentsOf: plistURL, options: [.mappedIfSafe])
         guard let metadata = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else { throw ScanError.invalidMetadata }
 
-        let name = url.deletingPathExtension().lastPathComponent
+        // Only ".app" is an extension here: a game folder named "Foo 1.5" keeps its whole name.
+        let name = url.pathExtension.lowercased() == "app" ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent
         var alternateNames: [String] = []
         for key in ["CFBundleDisplayName", "CFBundleName"] {
             if let value = visibleName(metadata[key]), value.caseInsensitiveCompare(name) != .orderedSame, !alternateNames.contains(value) { alternateNames.append(value) }

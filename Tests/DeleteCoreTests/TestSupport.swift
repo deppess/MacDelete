@@ -39,7 +39,7 @@ final class FakeSystem {
                 ApplicationRoot(url: applications, classification: .user, required: true),
                 ApplicationRoot(url: home.appending(path: "Applications"), classification: .user, required: false),
                 ApplicationRoot(url: systemApplications, classification: .system, required: true),
-                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common"), classification: .user, required: false, maxDepth: 2),
+                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common"), classification: .user, required: false, maxDepth: 2, extensionlessBundles: true),
             ],
             homebrewPrefixes: [homebrew],
             receipts: receipts,

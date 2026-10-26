@@ -53,7 +53,7 @@ public struct Roots: Sendable {
                 ApplicationRoot(url: URL(filePath: "/System/Library/CoreServices", directoryHint: .isDirectory), classification: .system, required: true),
                 ApplicationRoot(url: URL(filePath: "/Library/CoreServices", directoryHint: .isDirectory), classification: .system, required: false),
                 // Steam games, also when Spotlight is off: `common/<game>/<…>/Game.app`.
-                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common", directoryHint: .isDirectory), classification: .user, required: false, maxDepth: 2),
+                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common", directoryHint: .isDirectory), classification: .user, required: false, maxDepth: 2, extensionlessBundles: true),
             ],
             homebrewPrefixes: homebrewPrefixes(environment: environment),
             receipts: URL(filePath: "/var/db/receipts", directoryHint: .isDirectory),
@@ -141,12 +141,17 @@ public struct ApplicationRoot: Sendable {
     /// How many folders deep to look for bundles; nil for no limit. Game folders can hold
     /// hundreds of thousands of files, so Steam's library is searched shallowly.
     public var maxDepth: Int?
+    /// A folder directly inside the root that has its own `Contents/Info.plist` is an app even
+    /// without the `.app` extension: some Steam games (Stardew Valley) ship their whole folder as
+    /// the bundle.
+    public var extensionlessBundles: Bool
 
-    public init(url: URL, classification: AppClassification, required: Bool, maxDepth: Int? = nil) {
+    public init(url: URL, classification: AppClassification, required: Bool, maxDepth: Int? = nil, extensionlessBundles: Bool = false) {
         self.url = url
         self.classification = classification
         self.required = required
         self.maxDepth = maxDepth
+        self.extensionlessBundles = extensionlessBundles
     }
 }
 

@@ -321,6 +321,43 @@ final class SteamAndAppleTests: XCTestCase {
         XCTAssertEqual(paths, ["~/Library/Application Support/Steam/steamapps/common/Balatro", "~/Library/Application Support/Steam/steamapps/appmanifest_2379780.acf", "~/Applications/Balatro.app"])
     }
 
+    /// Stardew Valley's whole folder is its bundle, with no `.app` extension.
+    func testSteamGameWhoseFolderIsTheBundle() throws {
+        let system = try FakeSystem()
+        let steamapps = system.userLibrary.appending(path: "Application Support/Steam/steamapps")
+        try system.makeApp("Stardew Valley 1.6", in: steamapps.appending(path: "common"), metadata: ["CFBundleIdentifier": "com.concernedape.stardewvalley"])
+        try system.touch("Users/tester/Library/Application Support/Steam/steamapps/common/Notes/readme.txt")
+        try system.makeApp("Deep", in: steamapps.appending(path: "common/Notes"), metadata: ["CFBundleIdentifier": "com.example.deep"])
+        try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"413150\"\n\t\"installdir\"\t\t\"Stardew Valley 1.6\"\n}\n", to: steamapps.appending(path: "appmanifest_413150.acf"))
+        let shortcut = try system.makeApp("Stardew Valley.app", in: system.home.appending(path: "Applications"), metadata: ["CFBundleExecutable": "run"])
+        try system.write("#!/bin/sh\nopen steam://run/413150\n", to: shortcut.appending(path: "Contents/MacOS/run"), executable: true)
+        try system.touch("Users/tester/Library/Preferences/com.concernedape.stardewvalley.plist")
+
+        let inventory = Inventory.load(roots: system.roots, sizes: false)
+        XCTAssertEqual(Inventory.foldingSteamShortcuts(inventory.applications.filter { $0.classification == .user }).map(\.name), ["Stardew Valley 1.6"], "a folder bundle only directly inside common")
+        let plan = try system.plan("Stardew Valley 1.6")
+        let paths = Set(plan.findings.map { $0.path.replacingOccurrences(of: system.home.path + "/", with: "~/") })
+        XCTAssertEqual(paths, ["~/Library/Application Support/Steam/steamapps/common/Stardew Valley 1.6", "~/Library/Application Support/Steam/steamapps/appmanifest_413150.acf",
+                               "~/Applications/Stardew Valley.app", "~/Library/Preferences/com.concernedape.stardewvalley.plist"])
+    }
+
+    /// A shortcut whose game the scan didn't find still reaches the game through its manifest.
+    func testSteamShortcutFindsItsGameThroughTheManifest() throws {
+        let system = try FakeSystem()
+        let steamapps = system.userLibrary.appending(path: "Application Support/Steam/steamapps")
+        try system.touch("Users/tester/Library/Application Support/Steam/steamapps/common/Some Game/data.pak")
+        try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"12345\"\n\t\"installdir\"\t\t\"Some Game\"\n}\n", to: steamapps.appending(path: "appmanifest_12345.acf"))
+        try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"777\"\n\t\"installdir\"\t\t\"..\"\n}\n", to: steamapps.appending(path: "appmanifest_777.acf"))
+        let shortcut = try system.makeApp("Some Game.app", in: system.home.appending(path: "Applications"), metadata: ["CFBundleExecutable": "run"])
+        try system.write("#!/bin/sh\nopen steam://run/12345\n", to: shortcut.appending(path: "Contents/MacOS/run"), executable: true)
+        let escaping = try system.makeApp("Escape.app", in: system.home.appending(path: "Applications"), metadata: ["CFBundleExecutable": "run"])
+        try system.write("#!/bin/sh\nopen steam://run/777\n", to: escaping.appending(path: "Contents/MacOS/run"), executable: true)
+
+        let paths = Set(try system.plan("Some Game").findings.map { $0.path.replacingOccurrences(of: system.home.path + "/", with: "~/") })
+        XCTAssertEqual(paths, ["~/Applications/Some Game.app", "~/Library/Application Support/Steam/steamapps/common/Some Game", "~/Library/Application Support/Steam/steamapps/appmanifest_12345.acf"])
+        XCTAssertEqual(try system.plan("Escape").findings.map(\.path), [escaping.path], "a manifest naming .. is ignored")
+    }
+
     func testXcodeBuildDataIsKeptWhileAnotherXcodeRemains() throws {
         let system = try FakeSystem()
         try system.makeApp("Xcode.app", metadata: ["CFBundleIdentifier": "com.apple.dt.Xcode"])

@@ -11,8 +11,8 @@ enum SteamGame {
         var manifest: String
     }
 
-    static func findings(for application: InstalledApp, inventory: Inventory) -> [Finding] {
-        guard let game = game(for: application, inventory: inventory) else { return [] }
+    static func findings(for application: InstalledApp, inventory: Inventory, home: URL) -> [Finding] {
+        guard let game = game(for: application, inventory: inventory, home: home) else { return [] }
         var findings = [
             Finding(path: game.folder, tier: .exact, reason: "Steam game folder"),
             Finding(path: game.manifest, tier: .exact, reason: "Steam manifest for app \(game.appID)"),
@@ -23,16 +23,34 @@ enum SteamGame {
         return findings
     }
 
-    static func game(for application: InstalledApp, inventory: Inventory) -> Game? {
+    static func game(for application: InstalledApp, inventory: Inventory, home: URL) -> Game? {
         if application.isSteamShortcut {
             guard let appID = shortcutAppID(application) else { return nil }
             // The game's own bundle tells which library it's in.
+            var libraries = [home.appending(path: "Library/Application Support/Steam/steamapps").path]
             for candidate in inventory.applications where candidate.path.contains("/steamapps/common/") {
                 if let game = gameContaining(candidate.path), game.appID == appID { return game }
+                if let range = candidate.path.range(of: "/steamapps/common/") { libraries.append(String(candidate.path[..<range.lowerBound]) + "/steamapps") }
+            }
+            // A game without a bundle the scan found: its manifest names its folder.
+            for steamapps in Set(libraries) {
+                let manifest = steamapps + "/appmanifest_\(appID).acf"
+                guard let text = manifestText(manifest), value("appid", in: text) == appID, let directory = value("installdir", in: text),
+                      !directory.isEmpty, !directory.contains("/"), directory != ".", directory != ".." else { continue }
+                let folder = steamapps + "/common/" + directory
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+                return Game(appID: appID, folder: folder, manifest: manifest)
             }
             return nil
         }
         return gameContaining(application.path)
+    }
+
+    private static func manifestText(_ path: String) -> String? {
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= 1_048_576 else { return nil }
+        return try? String(contentsOfFile: path, encoding: .utf8)
     }
 
     /// The game whose folder holds `path`, from the library's manifests.
