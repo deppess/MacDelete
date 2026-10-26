@@ -1,0 +1,10 @@
+macdelete is GPL-3.0-or-later.
+
+Sources/DeleteCore/System/CommandRunner.swift, System/Concurrent.swift,
+Output/TerminalSanitizer.swift, Output/TableFormatter.swift, and the application scan in
+Discovery/AppScanner.swift come from Sift (~/Projects/sift), the same author's GPL-3.0-or-later
+macOS inventory tool.
+
+The removable-Apple-app list, the security-vendor list, and the generic-word list in
+Sources/DeleteCore/Evidence/Protection.swift and EvidenceFinder.swift are adapted from Mole
+(https://github.com/tw93/Mole, GPL-3.0), lib/core/app_protection_data.sh, as read on 2026-10-26.

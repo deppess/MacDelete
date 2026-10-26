@@ -1,0 +1,68 @@
+#!/bin/zsh
+# Clones an app and everything delete would remove into a disposable sandbox folder, then lets
+# delete's real deletion code run against the clones. The originals are only read: files are
+# copied with APFS clones (cp -c), which are instant and take no extra space until changed.
+#
+#   Scripts/sandbox clone "FL Studio 2026"     make a fresh sandbox for the app
+#   Scripts/sandbox run "FL Studio 2026" [-y]  delete the clones (always with DELETE_SANDBOX set)
+#   Scripts/sandbox show                       list what's in the sandbox
+#
+# The sandbox is $TMPDIR/delete-sandbox, or DELETE_SANDBOX_DIR if set; its name must start with
+# "delete-sandbox", and it's the only folder this script ever removes.
+set -euo pipefail
+
+sandbox=${DELETE_SANDBOX_DIR:-${TMPDIR%/}/delete-sandbox}
+case ${sandbox:t} in
+    delete-sandbox*) ;;
+    *) print -u2 "Refusing sandbox folder $sandbox: its name must start with delete-sandbox."; exit 2 ;;
+esac
+case $sandbox in
+    /*/*/*) ;;
+    *) print -u2 "Refusing sandbox folder $sandbox: too close to the root."; exit 2 ;;
+esac
+
+project=${0:A:h:h}
+swift build -c release --package-path "$project" --product delete >/dev/null
+bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
+
+command=${1:-}
+case $command in
+clone)
+    app=${2:?usage: Scripts/sandbox clone <app>}
+    plan=$(mktemp -t delete-plan)
+    trap 'rm -f "$plan"' EXIT
+    # Everything delete could remove, name matches included, so --include-name-matches can be tried too.
+    "$bin" --dry-run --json --include-name-matches -- "$app" > "$plan"
+    rm -rf -- "$sandbox"
+    mkdir -p -- "$sandbox"
+    count=$(plutil -extract findings raw -o - "$plan")
+    cloned=0
+    for (( i = 0; i < count; i++ )); do
+        source=$(plutil -extract "findings.$i.path" raw -o - "$plan")
+        target="$sandbox$source"
+        mkdir -p -- "${target:h}"
+        # -R copies folders, -P copies symbolic links as links, -p keeps modes and times.
+        if cp -c -p -R -P -- "$source" "$target" 2>/dev/null; then
+            cloned=$((cloned + 1))
+        else
+            print -u2 "Couldn't clone $source (unreadable without sudo?); it won't be in the sandbox."
+        fi
+    done
+    print "Cloned $cloned of $count items into $sandbox ($(du -sh "$sandbox" | cut -f1) as clones)."
+    print -r -- "Try it:  Scripts/sandbox run ${(q)app}"
+    ;;
+run)
+    app=${2:?usage: Scripts/sandbox run <app> [delete options]}
+    [[ -d $sandbox ]] || { print -u2 "No sandbox yet; run: Scripts/sandbox clone ${(q)app}"; exit 2 }
+    shift 2
+    DELETE_SANDBOX=$sandbox "$bin" "$@" -- "$app"
+    ;;
+show)
+    [[ -d $sandbox ]] || { print "No sandbox."; exit 0 }
+    find "$sandbox" -mindepth 1 -maxdepth 6 \( -name '*.app' -prune -print \) -o \( -type f -print \) -o \( -type l -print \) | sed "s|^$sandbox||" | sort | head -100
+    ;;
+*)
+    print -u2 "usage: Scripts/sandbox clone <app> | run <app> [-y] [--include-name-matches] | show"
+    exit 2
+    ;;
+esac
