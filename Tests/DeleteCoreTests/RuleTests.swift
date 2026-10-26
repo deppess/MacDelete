@@ -124,6 +124,20 @@ final class RuleTests: XCTestCase {
         XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact })
     }
 
+    /// Without Full Disk Access, macOS refuses to list other apps' containers. That must read as
+    /// "couldn't look", never as "nothing there".
+    func testAnUnreadableFolderIsReportedNotTakenAsEmpty() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let containers = try system.touch("Users/tester/Library/Containers/")
+        try system.touch("Users/tester/Library/Containers/com.example.app/")
+        XCTAssertEqual(chmod(containers.path, 0o000), 0)
+        defer { chmod(containers.path, 0o755) }
+        let plan = try system.plan("Example")
+        XCTAssertTrue(plan.unreadable.contains(containers.path), "\(plan.unreadable)")
+        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("Grant Full Disk Access to your terminal"))
+    }
+
     /// Unity's placeholder identifier is shared by unrelated games, so it finds nothing.
     func testPlaceholderIdentifiersAreNoEvidence() throws {
         let system = try FakeSystem()

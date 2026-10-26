@@ -1,0 +1,22 @@
+#!/bin/zsh
+# Builds delete in release mode and installs it as ~/.local/bin/delete (or $1/delete).
+#
+#   Scripts/install              install to ~/.local/bin
+#   Scripts/install /usr/local/bin
+#
+# The release folder moved in Swift 6.4 (.build/out/Products/Release), so it's asked for, not assumed.
+set -euo pipefail
+
+project=${0:A:h:h}
+destination=${1:-$HOME/.local/bin}
+swift build -c release --package-path "$project" --product delete
+bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
+[[ -x $bin ]] || { print -u2 "No binary at $bin."; exit 1 }
+
+mkdir -p -- "$destination"
+install -m 755 -- "$bin" "$destination/delete"
+print "Installed $destination/delete ($(du -h "$destination/delete" | cut -f1))."
+case ":$PATH:" in
+    *":$destination:"*) ;;
+    *) print "Note: $destination isn't on your PATH." ;;
+esac
