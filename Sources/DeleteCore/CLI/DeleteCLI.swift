@@ -132,10 +132,6 @@ public enum DeleteCLI {
 
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
-        if application.source == .macPorts {
-            printError("\(name) was installed by MacPorts. Remove it with \"sudo port uninstall <port>\" (\"port provides \(shellQuoted(application.path))/Contents/Info.plist\" names the port).")
-            return EXIT_FAILURE
-        }
         if !plan.activeSystemExtensions.isEmpty, sandbox == nil {
             print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
             printError("\nTurn off \(name)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
@@ -206,9 +202,7 @@ public enum DeleteCLI {
     }
 
     /// A path as it can be pasted into a shell.
-    static func shellQuoted(_ path: String) -> String {
-        path.allSatisfy { $0.isLetter || $0.isNumber || "/._-+".contains($0) } ? path : "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    static func shellQuoted(_ path: String) -> String { Format.shellQuoted(path) }
 
     static func printError(_ message: String) {
         // Standard output is buffered and standard error isn't; flush so the two stay in order.

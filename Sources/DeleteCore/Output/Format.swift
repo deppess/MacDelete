@@ -22,4 +22,9 @@ public enum Format {
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
     }
+
+    /// A path as it can be pasted into a shell.
+    static func shellQuoted(_ path: String) -> String {
+        path.allSatisfy { $0.isLetter || $0.isNumber || "/._-+".contains($0) } ? path : "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
 }

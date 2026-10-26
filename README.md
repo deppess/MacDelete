@@ -45,6 +45,7 @@ swift test                                 # fake system folders only; never tou
 Scripts/install                            # release build to ~/.local/bin/delete
 Scripts/sandbox clone "FL Studio 2026"     # APFS clones of everything the app's plan names
 Scripts/sandbox run "FL Studio 2026" -y    # really deletes the clones; system actions are only recorded
+Scripts/sandbox-all                        # sandbox-deletes every installed app in turn and checks each result
 Scripts/testapps plain | brew | package    # disposable test apps: plain download, Homebrew cask, installer package
 Scripts/testapps check                     # after deleting them: anything left behind, and what must survive
 ```

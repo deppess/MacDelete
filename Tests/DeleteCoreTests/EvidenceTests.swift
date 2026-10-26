@@ -191,6 +191,11 @@ final class FinderTests: XCTestCase {
         XCTAssertNotNil(Protection.refusal(for: app("Safari", id: "com.apple.Safari", classification: .system)))
         XCTAssertTrue(Protection.refusal(for: app("Falcon", id: "com.crowdstrike.falcon.App"))?.message.contains("CrowdStrike") ?? false)
         XCTAssertNil(Protection.refusal(for: app("Raycast", id: "com.raycast.macos")))
+        var idle = app("IDLE", id: "org.python.IDLE", path: "/Applications/MacPorts/Python 3.13/IDLE.app")
+        XCTAssertEqual(Protection.refusal(for: idle)?.message, "IDLE was installed by MacPorts. Remove it with \"sudo port uninstall <port>\" (\"port provides '/Applications/MacPorts/Python 3.13/IDLE.app/Contents/Info.plist'\" names the port).",
+                       "refused in dry runs and completion too, not only when deleting")
+        idle.path = "/Applications/IDLE.app"; idle.bundlePath = idle.path; idle.source = .macPorts
+        XCTAssertNotNil(Protection.refusal(for: idle))
     }
 
     func testRefusedAppsHaveNoPlan() throws {

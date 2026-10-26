@@ -1,0 +1,41 @@
+#!/usr/bin/python3 -I
+"""Sandbox-deletes every installed app in turn and checks the result: each selected item's clone
+is gone, each name-match clone is still there, and every original is untouched. Only APFS clones
+under $TMPDIR/delete-sandbox are deleted (see Scripts/sandbox); system actions are only recorded.
+Apps delete refuses (MacPorts, macOS) count as passes. Leaves the sandbox holding the last app.
+
+    Scripts/sandbox-all
+"""
+import json, os, subprocess, sys, time
+project = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+subprocess.run(["swift", "build", "-c", "release", "--package-path", project, "--product", "delete"], check=True, capture_output=True)
+B = subprocess.run(["swift", "build", "-c", "release", "--package-path", project, "--show-bin-path"], check=True, capture_output=True, text=True).stdout.strip() + "/delete"
+sandbox = os.environ["TMPDIR"].rstrip("/") + "/delete-sandbox"
+apps = json.loads(subprocess.run([B, "list", "--json"], capture_output=True, text=True, check=True).stdout)["applications"]
+results = []
+for app in apps:
+    path, name = app["path"], app["name"]
+    started = time.time()
+    planned = subprocess.run([B, "--dry-run", "--json", "--", path], capture_output=True, text=True)
+    if planned.returncode != 0:
+        results.append((name, 0, 0, 0, []))
+        print("%-34s refused: %s" % (name[:34], planned.stderr.strip()[:120]), flush=True)
+        continue
+    plan = json.loads(planned.stdout)
+    clone = subprocess.run([project + "/Scripts/sandbox", "clone", path], capture_output=True, text=True)
+    cloned = {f["path"] for f in plan["findings"] if os.path.lexists(sandbox + f["path"])}
+    run = subprocess.run([project + "/Scripts/sandbox", "run", path, "-y"], capture_output=True, text=True, timeout=900)
+    problems = []
+    for f in plan["findings"]:
+        if f["path"] not in cloned: continue
+        exists = os.path.lexists(sandbox + f["path"])
+        if f["tier"] == "exact" and exists: problems.append("exact clone left: " + f["path"])
+        if f["tier"] == "name" and not exists: problems.append("name-match clone deleted: " + f["path"])
+        if not os.path.lexists(f["path"]): problems.append("ORIGINAL GONE: " + f["path"])
+    if run.returncode != 0: problems.append("exit %d: %s" % (run.returncode, (run.stderr or run.stdout).strip().splitlines()[-1:] ))
+    uncloned = len(plan["findings"]) - len(cloned)
+    results.append((name, len(cloned), uncloned, round(time.time() - started, 1), problems))
+    print("%-34s cloned %3d  not cloned %2d  %5.1fs  %s" % (name[:34], len(cloned), uncloned, time.time() - started, "; ".join(problems)[:300] or "ok"), flush=True)
+bad = [r for r in results if r[4]]
+print("\napps %d, with problems %d" % (len(results), len(bad)))
+sys.exit(1 if bad else 0)

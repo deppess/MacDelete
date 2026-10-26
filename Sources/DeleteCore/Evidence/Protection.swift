@@ -41,6 +41,11 @@ public enum Protection {
                 return Refusal(message: "\(name) is part of macOS and can't be deleted.")
             }
         }
+        // MacPorts tracks its files itself; removing them by hand leaves it believing the port is
+        // installed (refused until the user decides otherwise, 2026-10-26).
+        if application.source == .macPorts || application.bundlePath.hasPrefix("/Applications/MacPorts/") {
+            return Refusal(message: "\(name) was installed by MacPorts. Remove it with \"sudo port uninstall <port>\" (\"port provides \(Format.shellQuoted(application.bundlePath + "/Contents/Info.plist").terminalInline)\" names the port).")
+        }
         if let vendor = securityVendors.first(where: { $0.prefixes.contains { identifier.lowercased().hasPrefix($0.lowercased()) } }) {
             return Refusal(message: "\(name) is \(vendor.name) security or management software. Use \(vendor.name)'s own uninstaller; removing its files by hand can trigger tamper alerts.")
         }
