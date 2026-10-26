@@ -164,7 +164,7 @@ public enum DeleteCLI {
             print("Nothing was deleted.")
             return EXIT_FAILURE
         }
-        let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home)
+        let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
         let report = executor.run(plan, targets: targets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))

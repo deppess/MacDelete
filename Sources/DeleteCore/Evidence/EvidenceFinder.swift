@@ -142,10 +142,18 @@ public struct EvidenceFinder: Sendable {
         // Homebrew's zap list: exact for a cask Homebrew installed (brew would delete it too),
         // name evidence from the catalog otherwise.
         var homebrewCask: String?
+        var emptyFolders: [String] = []
         if case let .homebrew(token, true) = application.source, let cask = inventory.casks.first(where: { $0.token == token }) {
             homebrewCask = token
-            for pattern in HomebrewZap.installedCaskPaths(token: token, prefix: cask.prefix) {
+            let zap = HomebrewZap.installedCaskPaths(token: token, prefix: cask.prefix)
+            for pattern in zap.remove {
                 for path in HomebrewZap.expand(pattern, home: roots.home) { collector.add(Finding(path: path, tier: .exact, reason: "Homebrew zap")) }
+            }
+            for pattern in zap.removeIfEmpty {
+                for path in HomebrewZap.expand(pattern, home: roots.home) where !emptyFolders.contains(path) {
+                    var isDirectory: ObjCBool = false
+                    if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue { emptyFolders.append(path) }
+                }
             }
         } else if let match = catalogTask?.value ?? nil {
             for pattern in match.paths {
@@ -158,6 +166,9 @@ public struct EvidenceFinder: Sendable {
 
         timing?.mark("  steam, homebrew, names")
         var findings = collector.finish(otherApplicationPaths: otherPaths)
+        // A folder the zap list removes only when empty is never deleted whole, not even as a name match.
+        let lowerEmpty = Set(emptyFolders.map { $0.lowercased() })
+        findings.removeAll { lowerEmpty.contains($0.path.lowercased()) }
         Self.measure(&findings, knownBundle: application.size.map { (application.bundlePath, $0) })
         timing?.mark("  sizes")
         let unreadable = Array(Set(collector.unreadable + findings.filter { !$0.sizeComplete }.map(\.path))).sorted()
@@ -173,6 +184,7 @@ public struct EvidenceFinder: Sendable {
         var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: collector.skipped, launchItems: launch.items, packages: packages.packages,
                                unreadable: unreadable, notes: notes, running: running, homebrewCask: homebrewCask)
         plan.activeSystemExtensions = activeExtensions
+        plan.emptyFolders = emptyFolders
         return plan
     }
 

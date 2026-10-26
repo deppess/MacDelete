@@ -23,10 +23,14 @@ public struct Executor {
     public let allowedRoot: String
     public let home: URL
 
-    public init(actions: SystemActions, allowedRoot: String, home: URL) {
+    /// Maps a planned path to the one acted on (into the sandbox for a sandbox run).
+    public let translate: (String) -> String
+
+    public init(actions: SystemActions, allowedRoot: String, home: URL, translate: @escaping (String) -> String = { $0 }) {
         self.actions = actions
         self.allowedRoot = allowedRoot
         self.home = home
+        self.translate = translate
     }
 
     /// `targets` are the confirmed findings with the identities they had when confirmed.
@@ -37,6 +41,13 @@ public struct Executor {
         // 1. Stop the launch items being deleted.
         for item in plan.launchItems where targetPaths.contains(item.plist.lowercased()) {
             if let error = actions.bootout(item) { report.warnings.append("Couldn't stop \(item.label): \(error)") }
+        }
+
+        // Stopping a launch item can't bring the app back, but one with KeepAlive may have
+        // relaunched it since it was quit. Deleting a running app lets it write its files again.
+        if !plan.launchItems.isEmpty, case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
+            report.stopped = "\(names.joined(separator: ", ")) started again and didn't quit; nothing was deleted."
+            return report
         }
 
         // Privacy permissions are reset while the app is still installed: tccutil finds the
@@ -82,6 +93,11 @@ public struct Executor {
                     return report
                 }
             }
+        }
+
+        // Folders the zap list removes only when empty, now that their contents are gone.
+        for folder in plan.emptyFolders {
+            if Remover.removeIfEmpty(translate(folder), allowedRoot: allowedRoot, home: home) { report.deleted.append(Finding(path: folder, tier: .exact, reason: "empty folder")) }
         }
 
         // 4. Records: installer receipts (root only), Launch Services.

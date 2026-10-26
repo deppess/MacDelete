@@ -3,16 +3,21 @@ import Foundation
 
 /// Homebrew's hand-written `zap` lists: what a cask's maintainers found each app leaves behind.
 enum HomebrewZap {
-    /// The zap paths in an installed cask's own receipt. `brew uninstall --zap` deletes these.
-    static func installedCaskPaths(token: String, prefix: String) -> [String] {
+    /// The zap paths in an installed cask's own receipt. `brew uninstall --zap` deletes `remove`;
+    /// `removeIfEmpty` are its `rmdir` folders, which Homebrew removes only when empty (a vendor
+    /// folder, `~/.claude`): never deleted with their contents.
+    static func installedCaskPaths(token: String, prefix: String) -> (remove: [String], removeIfEmpty: [String]) {
         let receipt = URL(filePath: prefix).appending(path: "Caskroom/\(token)/.metadata/INSTALL_RECEIPT.json")
         guard let data = try? Data(contentsOf: receipt), data.count <= 4 * 1_048_576,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        var paths: [String] = []
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], []) }
+        var remove: [String] = [], removeIfEmpty: [String] = []
         for stanza in json["uninstall_artifacts"] as? [[String: Any]] ?? [] {
-            for directive in stanza["zap"] as? [[String: Any]] ?? [] { paths += strings(directive, keys: ["trash", "delete", "rmdir"]) }
+            for directive in stanza["zap"] as? [[String: Any]] ?? [] {
+                remove += strings(directive, keys: ["trash", "delete"])
+                removeIfEmpty += strings(directive, keys: ["rmdir"])
+            }
         }
-        return paths
+        return (remove, removeIfEmpty)
     }
 
     /// The zap list Homebrew's downloaded catalog has for an app it didn't install, matched by the
@@ -36,7 +41,7 @@ enum HomebrewZap {
                     let arguments = Array(artifact.dropFirst())
                     switch kind {
                     case ":app": apps += (arguments.first as? [Any])?.compactMap { $0 as? String } ?? []
-                    case ":zap": for case let directive as [String: Any] in arguments { paths += strings(directive, keys: [":trash", ":delete", ":rmdir"]) }
+                    case ":zap": for case let directive as [String: Any] in arguments { paths += strings(directive, keys: [":trash", ":delete"]) }
                     case ":uninstall": for case let directive as [String: Any] in arguments { quits += strings(directive, keys: [":quit"]) }
                     default: continue
                     }
@@ -52,7 +57,8 @@ enum HomebrewZap {
                 var apps: [String] = [], quits: [String] = [], paths: [String] = []
                 for artifact in cask["artifacts"] as? [[String: Any]] ?? [] {
                     apps += (artifact["app"] as? [Any])?.compactMap { $0 as? String } ?? []
-                    for directive in artifact["zap"] as? [[String: Any]] ?? [] { paths += strings(directive, keys: ["trash", "delete", "rmdir"]) }
+                    // `rmdir` folders are removed only when empty, so they're no evidence of the app.
+                    for directive in artifact["zap"] as? [[String: Any]] ?? [] { paths += strings(directive, keys: ["trash", "delete"]) }
                     for directive in artifact["uninstall"] as? [[String: Any]] ?? [] { quits += strings(directive, keys: ["quit"]) }
                 }
                 candidates.append((token, apps, quits, paths))

@@ -41,6 +41,7 @@ public enum PlanRenderer {
         var also: [String] = []
         if let cask = plan.homebrewCask { also.append("Homebrew uninstalls the cask (brew uninstall --cask \(cask))") }
         if !plan.launchItems.isEmpty { also.append("stops \(count(plan.launchItems.count, "launch item")) first") }
+        if !plan.emptyFolders.isEmpty { also.append("removes \(plan.emptyFolders.map { display($0, home: home) }.joined(separator: ", ")) if nothing is left in \(plan.emptyFolders.count == 1 ? "it" : "them")") }
         if !plan.packages.isEmpty { also.append("forgets the installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", "))\(isRoot ? "" : " (needs sudo)")") }
         if !plan.identifiers.isEmpty { also.append("resets its privacy permissions") }
         if !also.isEmpty { lines += ["", "  Also: " + also.joined(separator: "; ") + "."] }
@@ -69,7 +70,7 @@ public enum PlanRenderer {
         struct Job: Encodable { let label: String; let plist: String; let domain: String }
         struct Document: Encodable {
             let name: String; let path: String; let bundleIdentifier: String?; let version: String?; let source: String; let homebrewCask: String?
-            let identifiers: [String]; let findings: [Item]; let kept: [Kept]; let launchItems: [Job]; let packages: [String]; let unreadable: [String]
+            let identifiers: [String]; let findings: [Item]; let kept: [Kept]; let launchItems: [Job]; let packages: [String]; let unreadable: [String]; let emptyFolders: [String]
             let activeSystemExtensions: [String]; let running: Bool; let notes: [String]
         }
         let application = plan.application
@@ -79,7 +80,7 @@ public enum PlanRenderer {
             findings: plan.findings.map { Item(path: $0.path, tier: $0.tier.rawValue, reason: $0.reason, size: $0.size, sizeComplete: $0.sizeComplete, needsRoot: $0.needsRoot) },
             kept: plan.skipped.map { Kept(path: $0.path, reason: $0.reason) },
             launchItems: plan.launchItems.map { Job(label: $0.label, plist: $0.plist, domain: $0.domain.rawValue) },
-            packages: plan.packages, unreadable: plan.unreadable, activeSystemExtensions: plan.activeSystemExtensions, running: plan.running, notes: plan.notes)
+            packages: plan.packages, unreadable: plan.unreadable, emptyFolders: plan.emptyFolders, activeSystemExtensions: plan.activeSystemExtensions, running: plan.running, notes: plan.notes)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return String(decoding: try encoder.encode(document), as: UTF8.self)

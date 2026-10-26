@@ -59,6 +59,9 @@ public struct RemovalPlan: Sendable {
     /// Homebrew removes the app first (`brew uninstall --cask <token>`); the rest, its zap list
     /// included, is deleted permanently by delete.
     public var homebrewCask: String?
+    /// Folders the cask's zap list names with `rmdir`: removed at the end only if nothing is left
+    /// in them (a `.DS_Store` aside), never with their contents.
+    public var emptyFolders: [String] = []
 
     public func selected(includeNameMatches: Bool) -> [Finding] {
         findings.filter { $0.tier == .exact || includeNameMatches }

@@ -302,6 +302,59 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Example Data") }?.reason, "Homebrew zap")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Example Data") }?.tier, .exact)
     }
+
+    /// `rmdir` in a zap list means "only if empty" (the claude-code cask names ~/.claude this way):
+    /// such a folder is never deleted with what's in it.
+    func testZapRmdirFoldersGoOnlyWhenEmpty() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        try system.touch("Users/tester/.example/history.jsonl")
+        try system.touch("Users/tester/Library/Application Support/Vendor/Example/state")
+        try system.touch("Users/tester/Library/Application Support/Vendor/Other Product/data")
+        try system.touch("Users/tester/Library/Application Support/Lonely/Example/cache")
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["zap": [
+            ["trash": ["~/Library/Application Support/Vendor/Example", "~/Library/Application Support/Lonely/Example"],
+             "rmdir": ["~/.example", "~/Library/Application Support/Vendor", "~/Library/Application Support/Lonely"]],
+        ]]]], to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        let plan = try system.plan("Example")
+        let support = system.userLibrary.appending(path: "Application Support")
+        XCTAssertFalse(plan.findings.contains { $0.path.hasSuffix("/.example") || $0.path == support.appending(path: "Vendor").path || $0.path == support.appending(path: "Lonely").path },
+                       "\(plan.findings.map(\.path))")
+        XCTAssertEqual(Set(plan.emptyFolders), [system.home.appending(path: ".example").path, support.appending(path: "Vendor").path, support.appending(path: "Lonely").path])
+
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
+            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        XCTAssertNil(report.stopped)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: ".example/history.jsonl").path), "a folder with contents stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Other Product/data").path), "another product's data stays")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Example").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Lonely").path), "emptied by the zap list, so it goes")
+        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("if nothing is left in them"))
+    }
+
+    func testRemoveIfEmptyLeavesContentsLinksAndStandardFolders() throws {
+        let system = try FakeSystem()
+        let full = try system.touch("Users/tester/full/")
+        try system.touch("Users/tester/full/file")
+        let tidy = try system.touch("Users/tester/tidy/")
+        try system.touch("Users/tester/tidy/.DS_Store")
+        let target = try system.touch("Users/tester/target/")
+        let link = system.home.appending(path: "link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let caches = try system.touch("Users/tester/Library/Caches/")
+        let root = system.root.path
+        XCTAssertFalse(Remover.removeIfEmpty(full.path, allowedRoot: root, home: system.home))
+        XCTAssertTrue(Remover.removeIfEmpty(tidy.path, allowedRoot: root, home: system.home), "only a .DS_Store counts as empty")
+        XCTAssertFalse(Remover.removeIfEmpty(link.path, allowedRoot: root, home: system.home))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertFalse(Remover.removeIfEmpty(caches.path, allowedRoot: root, home: system.home), "a standard Library folder, even empty")
+        XCTAssertFalse(Remover.removeIfEmpty(system.home.path, allowedRoot: root, home: system.home))
+        let other = try FakeSystem()
+        XCTAssertFalse(Remover.removeIfEmpty(other.root.path, allowedRoot: root, home: system.home), "outside the allowed root")
+    }
 }
 
 final class SteamAndAppleTests: XCTestCase {

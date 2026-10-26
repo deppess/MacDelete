@@ -277,6 +277,30 @@ final class ExecutorTests: XCTestCase {
         XCTAssertTrue(text.contains("Couldn't delete:\n  ~/Library/Application Support/com.example.app   1 item inside couldn't be removed (locked/file: Permission denied)"), text)
     }
 
+    /// A launch item with KeepAlive can relaunch the app after it was quit; it's quit again once
+    /// the items are stopped, and if it won't go, nothing is deleted.
+    func testAnAppThatComesBackAfterTheLaunchItemsStopBlocksTheRun() throws {
+        final class Relaunching: SystemActions, @unchecked Sendable {
+            var calls: [String] = []
+            func quit(identifiers: [String], bundlePath: String) -> QuitResult { calls.append("quit"); return .stillRunning(["Example"]) }
+            func bootout(_ item: LaunchItem) -> String? { calls.append("bootout"); return nil }
+            func uninstallCask(token: String, prefix: String) -> String? { nil }
+            func forgetPackage(_ identifier: String) -> String? { nil }
+            func resetPrivacy(_ identifier: String) -> String? { nil }
+            func unregister(_ appPath: String) -> String? { nil }
+        }
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+        XCTAssertFalse(plan.launchItems.isEmpty)
+        let actions = Relaunching()
+        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        XCTAssertEqual(actions.calls, ["bootout", "quit"])
+        XCTAssertEqual(report.stopped, "Example started again and didn't quit; nothing was deleted.")
+        XCTAssertTrue(report.deleted.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.applications.appending(path: "Example.app").path))
+    }
+
     func testJSONAndYesTogetherAreRejected() {
         XCTAssertThrowsError(try Invocation(arguments: ["Example", "--json", "-y"]))
         XCTAssertNoThrow(try Invocation(arguments: ["Example", "--json", "--dry-run"]))

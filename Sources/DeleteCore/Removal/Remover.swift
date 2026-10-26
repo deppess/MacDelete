@@ -70,6 +70,22 @@ public enum Remover {
         return removeTree(path, device: current.device)
     }
 
+    /// Removes a folder only if nothing is in it but a `.DS_Store`: Homebrew's `rmdir`. True when
+    /// it was removed. Anything else (contents, a link, a protected folder) leaves it alone.
+    public static func removeIfEmpty(_ path: String, allowedRoot: String, home: URL) -> Bool {
+        let root = allowedRoot == "/" ? "" : allowedRoot
+        let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+        guard path.hasPrefix("/"), !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
+              root.isEmpty || path.hasPrefix(root + "/"),
+              !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root),
+              !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return false }
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: path), names.allSatisfy({ $0 == ".DS_Store" }) else { return false }
+        if names.contains(".DS_Store") { unlink(path + "/.DS_Store") }
+        return rmdir(path) == 0
+    }
+
     private static func removeTree(_ path: String, device: Int32) -> Result<Void, RemovalError> {
         let copy = strdup(path)
         defer { free(copy) }
