@@ -147,7 +147,13 @@ public struct EvidenceFinder: Sendable {
             homebrewCask = token
             let zap = HomebrewZap.installedCaskPaths(token: token, prefix: cask.prefix)
             for pattern in zap.remove {
-                for path in HomebrewZap.expand(pattern, home: roots.home) { collector.add(Finding(path: path, tier: .exact, reason: "Homebrew zap")) }
+                for path in HomebrewZap.expand(pattern, home: roots.home) {
+                    // An item another installed app's identifier names stays, whatever the list says.
+                    switch ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) {
+                    case let .other(owner)?, let .shared(owner)?: collector.skip(path, "also belongs to \(Format.path(owner, home: roots.home))")
+                    default: collector.add(Finding(path: path, tier: .exact, reason: "Homebrew zap"))
+                    }
+                }
             }
             for pattern in zap.removeIfEmpty {
                 for path in HomebrewZap.expand(pattern, home: roots.home) where !emptyFolders.contains(path) {
@@ -157,7 +163,11 @@ public struct EvidenceFinder: Sendable {
             }
         } else if let match = catalogTask?.value ?? nil {
             for pattern in match.paths {
-                for path in HomebrewZap.expand(pattern, home: roots.home) { collector.add(Finding(path: path, tier: .name, reason: "Homebrew's list for \(match.token)")) }
+                for path in HomebrewZap.expand(pattern, home: roots.home) {
+                    if case .other? = ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) { continue }
+                    if case .shared? = ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) { continue }
+                    collector.add(Finding(path: path, tier: .name, reason: "Homebrew's list for \(match.token)"))
+                }
             }
         }
 

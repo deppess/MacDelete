@@ -182,7 +182,9 @@ public struct AppScanner: Sendable {
         let hasReceipt = FileManager.default.fileExists(atPath: bundle.appending(path: "Contents/_MASReceipt/receipt").path)
         return InstalledApp(
             path: url.path, bundlePath: bundle.path, name: name, bundleIdentifier: bundleIdentifier, alternateNames: alternateNames,
-            version: (metadata["CFBundleShortVersionString"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            // The marketing version, else the build version (Steam and some utilities set only that).
+            version: (metadata["CFBundleShortVersionString"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                ?? (metadata["CFBundleVersion"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
             executableName: executable, classification: classification, source: .download, size: nil, linkTargets: linkTargets,
             hasAppStoreReceipt: hasReceipt || isIOS, isIOSApp: isIOS, isSteamShortcut: steamShortcut
         )

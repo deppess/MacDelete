@@ -49,12 +49,19 @@ public enum Protection {
 
     /// Paths delete never removes, whatever matched them: the user's own documents and shared
     /// data, system locations, and the standard folders themselves.
+    /// Checked against the injected roots (tests, the sandbox) and always against the real system's
+    /// own folders too, so a path from outside the roots (a zap list naming "/Applications") is
+    /// still protected.
     public static func isProtected(_ path: String, roots: Roots) -> Bool {
+        let homePath = roots.home.standardizedFileURL.path
+        let root = roots.systemRoot == "/" ? "" : roots.systemRoot
+        return isProtected(path, homePath: homePath, libraryPath: roots.library.standardizedFileURL.path, root: root)
+            || (!root.isEmpty && isProtected(path, homePath: homePath, libraryPath: "/Library", root: ""))
+    }
+
+    private static func isProtected(_ path: String, homePath: String, libraryPath: String, root: String) -> Bool {
         let path = URL(filePath: path).standardizedFileURL.path
         let lowered = path.lowercased()
-        let homePath = roots.home.standardizedFileURL.path
-        let libraryPath = roots.library.standardizedFileURL.path
-        let root = roots.systemRoot == "/" ? "" : roots.systemRoot
         // /System is protected wherever the injected root is.
         if lowered == "/system" || lowered.hasPrefix("/system/") { return true }
 

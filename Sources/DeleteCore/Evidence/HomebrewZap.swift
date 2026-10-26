@@ -75,7 +75,38 @@ enum HomebrewZap {
     }
 
     /// Expands `~` and shell globs; returns only paths that exist.
+    /// A zap list is the cask maintainers' data. A path component with a wildcard is accepted
+    /// only when it still names something specific: three literal characters before the wildcard
+    /// (`com.vendor.*`, `Live_*.plist`), or a literal run of six or more that isn't a file
+    /// extension (`*.com.vendor.app`, a team-ID prefix). `*`, `*.plist` or `[a-z]*` would sweep up
+    /// every other app's items in that folder. Measured on Homebrew's catalog (2026-10-26): 20 of
+    /// 2,409 wildcard paths rejected, all `*` folder components or bare `*`/`*.log` names.
+    static func isSpecific(_ pattern: String) -> Bool {
+        pattern.split(separator: "/").allSatisfy { component in
+            let text = String(component)
+            guard text.contains(where: { "*?[".contains($0) }) else { return true }
+            // Literal runs between wildcards; a [...] class counts as a wildcard.
+            var runs: [String] = [], current = "", inClass = false
+            for character in text {
+                if inClass { if character == "]" { inClass = false }; continue }
+                if character == "[" || character == "*" || character == "?" {
+                    runs.append(current); current = ""
+                    inClass = character == "["
+                } else {
+                    current.append(character)
+                }
+            }
+            runs.append(current)
+            if runs[0].count >= 3 { return true }
+            return runs.contains { $0.count >= 6 && !fileExtensions.contains($0.lowercased()) }
+        }
+    }
+
+    private static let fileExtensions: Set<String> = [".plist", ".log", ".app", ".savedstate", ".crash", ".ips", ".diag", ".db", ".json", ".txt", ".binarycookies",
+                                                      ".sfl2", ".sfl3", ".sfl4", ".bom", ".pkg", ".dmg", ".zip", ".lock", ".tmp", ".cache", ".sqlite"]
+
     static func expand(_ pattern: String, home: URL) -> [String] {
+        guard isSpecific(pattern) else { return [] }
         let expanded = pattern.hasPrefix("~/") ? home.appending(path: String(pattern.dropFirst(2))).path : pattern
         guard expanded.hasPrefix("/"), !expanded.split(separator: "/").contains("..") else { return [] }
         var result = glob_t()
