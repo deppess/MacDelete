@@ -1,0 +1,95 @@
+#!/usr/bin/python3 -I
+"""How much of what an app leaves behind `delete` finds, measured against Homebrew's hand-written
+zap lists: for every installed app that has one, each listed path that exists is found as exact
+evidence, found as a name match, kept (and said why), or missed. Read-only: only dry runs.
+
+Apps Homebrew installed are shown apart, since their own zap list is part of their plan.
+
+    Scripts/recall          totals and every app with a miss
+    Scripts/recall -v       every app, every name match and miss
+"""
+import glob, json, os, re, subprocess, sys
+
+project = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+verbose = "-v" in sys.argv[1:]
+home = os.path.expanduser("~")
+subprocess.run(["swift", "build", "-c", "release", "--package-path", project, "--product", "delete"], check=True, capture_output=True)
+binary = subprocess.run(["swift", "build", "-c", "release", "--package-path", project, "--show-bin-path"], check=True, capture_output=True, text=True).stdout.strip() + "/delete"
+
+catalogs = sorted(glob.glob(home + "/Library/Caches/Homebrew/api/internal/packages.*.jws.json"), key=os.path.getmtime)
+if not catalogs:
+    sys.exit("No Homebrew catalog in ~/Library/Caches/Homebrew/api/internal; run brew update once.")
+casks = json.loads(json.load(open(catalogs[-1]))["payload"])["casks"]
+
+def strings(value):
+    return [value] if isinstance(value, str) else [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+by_app, by_identifier = {}, {}
+for token, cask in casks.items():
+    for artifact in cask.get("raw_artifacts") or []:
+        if not (isinstance(artifact, list) and artifact):
+            continue
+        if artifact[0] == ":app" and len(artifact) > 1:
+            for app in strings(artifact[1]):
+                by_app.setdefault(os.path.basename(app).lower(), set()).add(token)
+        if artifact[0] == ":uninstall":
+            for directive in artifact[1:]:
+                if isinstance(directive, dict):
+                    for identifier in strings(directive.get(":quit")):
+                        by_identifier.setdefault(identifier.lower(), set()).add(token)
+
+def zap_paths(token):
+    paths = []
+    for artifact in casks[token].get("raw_artifacts") or []:
+        if isinstance(artifact, list) and artifact and artifact[0] == ":zap":
+            for directive in artifact[1:]:
+                if isinstance(directive, dict):
+                    paths += strings(directive.get(":trash")) + strings(directive.get(":delete"))
+    return paths
+
+listing = json.loads(subprocess.run([binary, "list", "--json"], capture_output=True, text=True, check=True).stdout)["applications"]
+totals = {"rules": {"exact": 0, "name": 0, "kept": 0, "missed": 0}, "homebrew": {"exact": 0, "name": 0, "kept": 0, "missed": 0}}
+for application in listing:
+    identifier = (application.get("bundleIdentifier") or "").lower()
+    tokens = by_identifier.get(identifier) if identifier in by_identifier and len(by_identifier[identifier]) == 1 else by_app.get(os.path.basename(application["path"]).lower(), set())
+    if len(tokens) != 1:
+        continue
+    token = next(iter(tokens))
+    existing = set()
+    for pattern in zap_paths(token):
+        for match in glob.glob(os.path.expanduser(pattern)):
+            existing.add(os.path.normpath(match))
+    if not existing:
+        continue
+    run = subprocess.run([binary, "--dry-run", "--json", "--", application["path"]], capture_output=True, text=True)
+    if run.returncode != 0:
+        continue
+    plan = json.loads(run.stdout)
+    findings = {finding["path"]: finding["tier"] for finding in plan["findings"]}
+    kept = {item["path"]: item["reason"] for item in plan["kept"]}
+    def outcome(path):
+        for found, tier in findings.items():
+            if path == found or path.startswith(found + "/"):
+                return tier
+        for item in kept:
+            if path == item or path.startswith(item + "/"):
+                return "kept"
+        return "missed"
+    results = {path: outcome(path) for path in existing}
+    group = "homebrew" if application["source"] == "homebrew" else "rules"
+    for result in results.values():
+        totals[group]["exact" if result == "exact" else "name" if result == "name" else result] += 1
+    misses = sorted(path for path, result in results.items() if result == "missed")
+    if verbose or misses:
+        counts = {kind: sum(1 for result in results.values() if result == kind) for kind in ("exact", "name", "kept", "missed")}
+        print("%s (%s%s): %d exist, %d exact, %d name, %d kept, %d missed" % (application["name"], token, ", installed by Homebrew" if group == "homebrew" else "", len(existing),
+              counts["exact"], counts["name"], counts["kept"], counts["missed"]))
+        for path, result in sorted(results.items()):
+            if result == "missed" or (verbose and result != "exact"):
+                print("    %-6s %s" % (result, path.replace(home, "~")))
+
+for group, label in (("rules", "Apps Homebrew didn't install (the rules alone)"), ("homebrew", "Apps Homebrew installed (their zap list is in the plan)")):
+    t = totals[group]
+    total = sum(t.values())
+    if total:
+        print("%s: %d paths: %d exact (%d%%), %d name, %d kept, %d missed" % (label, total, t["exact"], 100 * t["exact"] // total, t["name"], t["kept"], t["missed"]))
