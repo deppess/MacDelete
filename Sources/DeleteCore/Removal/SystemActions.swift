@@ -67,7 +67,7 @@ public final class LiveSystemActions: SystemActions, @unchecked Sendable {
         var remaining = running
         while !remaining.isEmpty, Date() < deadline {
             usleep(200_000)
-            remaining = remaining.filter { Darwin.kill($0.processIdentifier, 0) == 0 || errno != ESRCH }
+            remaining = remaining.filter { RunningApps.isAlive($0.processIdentifier) }
         }
         return remaining.isEmpty ? .quit : .stillRunning(remaining.map { $0.localizedName ?? $0.bundleIdentifier ?? "pid \($0.processIdentifier)" })
     }
