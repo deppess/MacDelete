@@ -187,6 +187,21 @@ final class MatcherTests: XCTestCase {
         guard case .notFound = AppMatcher.match("nothing", in: applications, home: home) else { return XCTFail() }
     }
 
+    func testTheSameNameInTwoUserFoldersIsAmbiguous() {
+        let twins = [app("Notes Pro", id: "com.example.notes"), app("Notes Pro", id: "com.example.notes", path: "/Users/tester/Applications/Notes Pro.app")]
+        guard case let .ambiguous(candidates) = AppMatcher.match("notes pro", in: twins, home: home) else { return XCTFail("expected ambiguity") }
+        XCTAssertEqual(candidates.count, 2)
+        guard case .ambiguous = AppMatcher.match("com.example.notes", in: twins, home: home) else { return XCTFail("the identifier is shared too") }
+        XCTAssertEqual(name(AppMatcher.match("/Users/tester/Applications/Notes Pro.app", in: twins, home: home)), "/Users/tester/Applications/Notes Pro.app", "a path settles it")
+    }
+
+    func testWhitespaceIsTrimmedAndIdentifiersNeedTheWholeIdentifier() {
+        XCTAssertEqual(name(AppMatcher.match("  Raycast \n", in: applications, home: home)), "/Applications/Raycast.app")
+        guard case .notFound = AppMatcher.match("com.raycast", in: applications, home: home) else { return XCTFail("an identifier prefix isn't a match") }
+        guard case .notFound = AppMatcher.match("   ", in: applications, home: home) else { return XCTFail() }
+        guard case .notFound = AppMatcher.match("saf", in: applications, home: home) else { return XCTFail("a prefix never lands on a system app") }
+    }
+
     func testPaths() throws {
         let system = try FakeSystem()
         let url = try system.makeApp("Loose.app", in: system.home.appending(path: "Downloads"), metadata: ["CFBundleIdentifier": "com.example.loose"])

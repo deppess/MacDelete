@@ -88,6 +88,24 @@ final class FakeSystem {
         return url
     }
 
+    /// Gives a bundle a real executable and an ad-hoc signature carrying these app groups, so
+    /// the Security framework reads its entitlements as it would a shipped app's.
+    func sign(_ bundle: URL, applicationGroups: [String]) throws {
+        let info = bundle.appending(path: "Contents/Info.plist")
+        var metadata = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: info), format: nil) as? [String: Any])
+        metadata["CFBundleExecutable"] = metadata["CFBundleExecutable"] ?? bundle.deletingPathExtension().lastPathComponent
+        try writePlist(metadata, to: info)
+        let executable = bundle.appending(path: "Contents/MacOS/\(metadata["CFBundleExecutable"]!)")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: executable)
+        try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: executable.path)
+        let entitlements = root.appending(path: "entitlements-\(UUID().uuidString).plist")
+        try writePlist(["com.apple.security.application-groups": applicationGroups], to: entitlements)
+        defer { try? FileManager.default.removeItem(at: entitlements) }
+        let result = try CommandRunner().run(executable: URL(filePath: "/usr/bin/codesign"), arguments: ["-f", "-s", "-", "--entitlements", entitlements.path, bundle.path], environment: [:], timeout: 30, outputLimit: 65_536)
+        XCTAssertEqual(result.status, 0, String(decoding: result.stderr, as: UTF8.self))
+    }
+
     func write(_ contents: String, to url: URL, executable: Bool = false) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(contents.utf8).write(to: url)

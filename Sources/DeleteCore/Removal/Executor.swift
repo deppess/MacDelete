@@ -14,9 +14,9 @@ public struct ExecutionReport: Sendable {
 }
 
 /// Carries out a confirmed plan. Order matters: launch items are stopped first so nothing
-/// relaunches; Homebrew uninstalls its cask; the app itself goes next, and if it can't be
-/// deleted the run stops with the app's data intact; then the leftovers; then the records
-/// (receipts, privacy permissions, Launch Services).
+/// relaunches; privacy permissions are reset while the app is still registered; Homebrew
+/// uninstalls its cask; the app itself goes next, and if it can't be deleted the run stops with
+/// the app's data intact; then the leftovers; then the records (receipts, Launch Services).
 public struct Executor {
     public let actions: SystemActions
     /// Every target must lie inside this folder ("/" for a real run, the sandbox otherwise).
@@ -39,6 +39,15 @@ public struct Executor {
             if let error = actions.bootout(item) { report.warnings.append("Couldn't stop \(item.label): \(error)") }
         }
 
+        // Privacy permissions are reset while the app is still installed: tccutil finds the
+        // identifier through Launch Services and fails once the bundle is gone. Embedded helpers
+        // often aren't registered at all, so only the app's own failure is reported.
+        for identifier in plan.identifiers {
+            if let error = actions.resetPrivacy(identifier), identifier == plan.application.bundleIdentifier {
+                report.warnings.append("Couldn't reset its privacy permissions: \(error)")
+            }
+        }
+
         // 2. Homebrew removes the app it installed (without --zap: its zap list is in the plan
         // and is deleted permanently below, where brew would move it to the Trash).
         var homebrewDone = false
@@ -51,8 +60,7 @@ public struct Executor {
         }
 
         // 3. The app itself first, then everything else.
-        let own = Set([plan.application.path, plan.application.bundlePath].map { $0.lowercased() })
-        let isOwn: (Finding) -> Bool = { own.contains($0.path.lowercased()) || $0.reason == "Steam game folder" }
+        let isOwn = plan.isOwn
         let ordered = targets.filter { isOwn($0.finding) } + targets.filter { !isOwn($0.finding) }
         for item in ordered {
             switch Remover.remove(item.target, allowedRoot: allowedRoot, home: home) {
@@ -66,13 +74,17 @@ public struct Executor {
                 report.failed.append((item.finding, error.message))
                 if isOwn(item.finding) {
                     // Without the app gone, deleting its data would only break it.
-                    report.stopped = "\(plan.application.name) itself couldn't be deleted, so its other files were left alone."
+                    if case .incomplete = error {
+                        report.stopped = "\(plan.application.name) was only partly deleted, so its other files were left alone. Rerun with sudo to finish."
+                    } else {
+                        report.stopped = "\(plan.application.name) itself couldn't be deleted, so its other files were left alone."
+                    }
                     return report
                 }
             }
         }
 
-        // 4. Records: installer receipts (root only), privacy permissions, Launch Services.
+        // 4. Records: installer receipts (root only), Launch Services.
         if !plan.packages.isEmpty {
             if isRoot {
                 for package in plan.packages { if let error = actions.forgetPackage(package) { report.warnings.append("Couldn't forget receipt \(package): \(error)") } }
@@ -80,7 +92,6 @@ public struct Executor {
                 report.warnings.append("The installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", ")) need\(plan.packages.count == 1 ? "s" : "") sudo to forget.")
             }
         }
-        for identifier in plan.identifiers { _ = actions.resetPrivacy(identifier) }
         _ = actions.unregister(plan.application.path)
         return report
     }

@@ -194,6 +194,89 @@ final class ExecutorTests: XCTestCase {
         }
     }
 
+    /// An app owned by root can't be deleted without sudo, so none of its data is either.
+    func testAnAppNeedingRootLeavesEverythingForSudo() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        var plan = try system.plan("Example")
+        let preferences = try XCTUnwrap(plan.findings.firstIndex { $0.path.hasSuffix("com.example.app.plist") })
+        plan.findings[preferences].needsRoot = true
+        var split = plan.split(includeNameMatches: false, isRoot: false)
+        XCTAssertEqual(split.needingRoot.map(\.path), [plan.findings[preferences].path], "a leftover needing root is only set aside")
+        XCTAssertTrue(split.deleting.contains { plan.isOwn($0) })
+
+        let own = try XCTUnwrap(plan.findings.firstIndex { plan.isOwn($0) })
+        plan.findings[own].needsRoot = true
+        split = plan.split(includeNameMatches: false, isRoot: false)
+        XCTAssertTrue(split.deleting.isEmpty)
+        XCTAssertEqual(split.needingRoot.count, plan.selected(includeNameMatches: false).count)
+        XCTAssertNil(PlanRenderer.question(plan, includeNameMatches: false, isRoot: false), "nothing to ask: the run stops")
+        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("Example itself needs administrator rights"))
+        XCTAssertEqual(plan.split(includeNameMatches: false, isRoot: true).deleting.count, plan.selected(includeNameMatches: false).count)
+        XCTAssertNotNil(PlanRenderer.question(plan, includeNameMatches: false, isRoot: true))
+    }
+
+    /// tccutil looks the identifier up through Launch Services, so it runs while the app is there.
+    func testPrivacyIsResetWhileTheAppIsStillInstalled() throws {
+        final class Watching: SystemActions, @unchecked Sendable {
+            let bundle: String
+            var appExistedAtReset: [Bool] = []
+            init(bundle: String) { self.bundle = bundle }
+            func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
+            func bootout(_ item: LaunchItem) -> String? { nil }
+            func uninstallCask(token: String, prefix: String) -> String? { nil }
+            func forgetPackage(_ identifier: String) -> String? { nil }
+            func resetPrivacy(_ identifier: String) -> String? {
+                appExistedAtReset.append(FileManager.default.fileExists(atPath: bundle))
+                return identifier == "com.example.app" ? "tccutil: No such bundle identifier" : nil
+            }
+            func unregister(_ appPath: String) -> String? { nil }
+        }
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+        let actions = Watching(bundle: plan.application.bundlePath)
+        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        XCTAssertFalse(actions.appExistedAtReset.isEmpty)
+        XCTAssertTrue(actions.appExistedAtReset.allSatisfy { $0 })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plan.application.bundlePath))
+        XCTAssertTrue(report.warnings.contains { $0.contains("privacy permissions") }, "the app's own failure is reported: \(report.warnings)")
+    }
+
+    func testAPartlyDeletedAppStopsAndSaysSo() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let resources = system.applications.appending(path: "Example.app/Contents/Resources")
+        try system.touch("Applications/Example.app/Contents/Resources/locked")
+        try system.touch("Applications/Example.app/Contents/Other/loose")
+        XCTAssertEqual(chmod(resources.path, 0o555), 0)
+        defer { chmod(resources.path, 0o755) }
+        let plan = try system.plan("Example")
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        XCTAssertEqual(report.stopped, "Example was only partly deleted, so its other files were left alone. Rerun with sudo to finish.")
+        XCTAssertTrue(report.failed.first?.reason.contains("couldn't be removed") ?? false, "\(report.failed)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
+    }
+
+    /// A leftover that can't be fully removed is reported; the rest still goes.
+    func testAFailedLeftoverIsReportedAndTheRestGoes() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let support = system.userLibrary.appending(path: "Application Support/com.example.app")
+        try system.touch("Users/tester/Library/Application Support/com.example.app/locked/file")
+        XCTAssertEqual(chmod(support.appending(path: "locked").path, 0o555), 0)
+        defer { chmod(support.appending(path: "locked").path, 0o755) }
+        let plan = try system.plan("Example")
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        XCTAssertNil(report.stopped)
+        XCTAssertEqual(report.failed.map(\.finding.path), [support.path])
+        XCTAssertEqual(report.deleted.count, 3)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
+        let text = PlanRenderer.report(report, home: system.home)
+        XCTAssertTrue(text.hasPrefix("Deleted 3 items"), text)
+        XCTAssertTrue(text.contains("Couldn't delete:\n  ~/Library/Application Support/com.example.app   1 item inside couldn't be removed (locked/file: Permission denied)"), text)
+    }
+
     func testJSONAndYesTogetherAreRejected() {
         XCTAssertThrowsError(try Invocation(arguments: ["Example", "--json", "-y"]))
         XCTAssertNoThrow(try Invocation(arguments: ["Example", "--json", "--dry-run"]))

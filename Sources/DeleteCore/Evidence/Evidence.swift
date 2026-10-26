@@ -63,6 +63,26 @@ public struct RemovalPlan: Sendable {
     public func selected(includeNameMatches: Bool) -> [Finding] {
         findings.filter { $0.tier == .exact || includeNameMatches }
     }
+
+    /// The app's own bundle (or a Steam game's folder): deleted first, and the run stops if it can't be.
+    public func isOwn(_ finding: Finding) -> Bool {
+        let lowered = finding.path.lowercased()
+        return lowered == application.path.lowercased() || lowered == application.bundlePath.lowercased() || finding.reason == "Steam game folder"
+    }
+
+    /// True when the app itself needs administrator rights this run doesn't have. Then nothing is
+    /// deleted: removing its data while the app stays would only break it.
+    public func appNeedsRoot(isRoot: Bool) -> Bool {
+        !isRoot && findings.contains { isOwn($0) && $0.needsRoot }
+    }
+
+    /// What this run deletes, and what it leaves for `sudo`.
+    public func split(includeNameMatches: Bool, isRoot: Bool) -> (deleting: [Finding], needingRoot: [Finding]) {
+        let selected = selected(includeNameMatches: includeNameMatches)
+        if isRoot { return (selected, []) }
+        if appNeedsRoot(isRoot: isRoot) { return ([], selected) }
+        return (selected.filter { !$0.needsRoot }, selected.filter(\.needsRoot))
+    }
 }
 
 /// Why an app can't be deleted at all.

@@ -105,8 +105,9 @@ public enum DeleteCLI {
                 return EXIT_SUCCESS
             }
             print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
-            let needsSudo = !isRoot && plan.selected(includeNameMatches: invocation.includeNameMatches).contains(where: \.needsRoot)
-            print("\nDry run: nothing was deleted." + (needsSudo ? " Run with sudo to include the items that need administrator rights." : ""))
+            let needsSudo = !plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot.isEmpty
+            let hint = plan.appNeedsRoot(isRoot: isRoot) ? " Deleting it needs: sudo delete \(shellQuoted(application.path))" : needsSudo ? " Run with sudo to include the items that need administrator rights." : ""
+            print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
         }
         guard !invocation.json else {
@@ -145,10 +146,10 @@ public enum DeleteCLI {
         }
 
         print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
-        let selected = plan.selected(includeNameMatches: invocation.includeNameMatches).filter { isRoot || !$0.needsRoot }
-        let needingRoot = plan.selected(includeNameMatches: invocation.includeNameMatches).filter { !isRoot && $0.needsRoot }
+        let (selected, needingRoot) = plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot)
         guard let question = PlanRenderer.question(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot) else {
-            printError("\nEverything left needs administrator rights. Run: sudo delete \(shellQuoted(application.path))")
+            let reason = plan.appNeedsRoot(isRoot: isRoot) ? "\(name) itself needs administrator rights" : "Everything left needs administrator rights"
+            printError("\n\(reason), so nothing was deleted. Run: sudo delete \(shellQuoted(application.path))")
             return EXIT_FAILURE
         }
         // What's deleted must be what was shown: identities are taken before asking.

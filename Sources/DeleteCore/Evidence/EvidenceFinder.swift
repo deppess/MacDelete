@@ -18,8 +18,11 @@ public struct EvidenceFinder: Sendable {
         // Identifiers: the app's, its embedded helpers', and its privileged helper tools' labels.
         let embedded = EmbeddedBundles.find(in: bundle, mainIdentifier: application.bundleIdentifier)
         let helperLabels = EmbeddedBundles.privilegedHelperLabels(in: bundle)
-        var identifiers: [String] = application.bundleIdentifier.map { [$0] } ?? []
-        for identifier in embedded.map(\.identifier) + helperLabels where !identifiers.contains(where: { $0.caseInsensitiveCompare(identifier) == .orderedSame }) {
+        // A template's placeholder identifier (Unity's com.Company.ProductName) is shared by
+        // unrelated apps, so it's no evidence; only the app's name finds its files then.
+        let placeholder = application.bundleIdentifier.flatMap { Self.isPlaceholder($0) ? $0 : nil }
+        var identifiers: [String] = placeholder == nil ? application.bundleIdentifier.map { [$0] } ?? [] : []
+        for identifier in embedded.map(\.identifier) + helperLabels where !Self.isPlaceholder(identifier) && !identifiers.contains(where: { $0.caseInsensitiveCompare(identifier) == .orderedSame }) {
             identifiers.append(identifier)
         }
         // A helper app installed outside the bundle (iStat Menus keeps its agents' apps in
@@ -118,6 +121,9 @@ public struct EvidenceFinder: Sendable {
         launch.findings.forEach { collector.add($0) }
         collector.unreadable += launch.unreadable
 
+        // Browser native-messaging manifests that run a program inside the app.
+        for finding in NativeMessaging.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
+
         // Installer packages.
         timing?.mark("  launch items")
         let packages = packagesTask.value
@@ -157,6 +163,7 @@ public struct EvidenceFinder: Sendable {
         let unreadable = Array(Set(collector.unreadable + findings.filter { !$0.sizeComplete }.map(\.path))).sorted()
 
         var notes: [String] = []
+        if let placeholder { notes.append("Its bundle identifier \(placeholder.terminalInline) is a template's placeholder that other apps share, so only its name was used to find its files.") }
         let running = RunningApps.isRunning(identifiers: identifiers, bundlePath: application.bundlePath)
         let activeExtensions = activeSystemExtensions(embedded: embedded)
         notes += activeExtensions.map { "Its system extension \($0) is active. Deleting the app doesn't remove it; turn it off in the app (or System Settings › General › Login Items & Extensions) first." }
@@ -236,6 +243,14 @@ public struct EvidenceFinder: Sendable {
         "chrome", "chromium", "java", "python", "node", "setup", "installer", "uninstaller", "main", "default", "data", "cache", "caches", "logs", "temp", "tmp"]
 
     // MARK: - Helpers
+
+    /// Identifiers project templates fill in until the developer sets one (Unity, Xcode's old
+    /// templates), found in shipped games.
+    static func isPlaceholder(_ identifier: String) -> Bool {
+        let lowered = identifier.lowercased()
+        if ["com.company.productname", "unity.company.productname", "com.yourcompany.productname"].contains(lowered) { return true }
+        return ["com.defaultcompany.", "unity.defaultcompany.", "com.yourcompany.", "com.mycompany."].contains { lowered.hasPrefix($0) }
+    }
 
     static func kind(of embeddedPath: String) -> String {
         switch URL(filePath: embeddedPath).pathExtension.lowercased() {

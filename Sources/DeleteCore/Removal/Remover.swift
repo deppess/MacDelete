@@ -80,7 +80,11 @@ public enum Remover {
         var first: String?
         func fail(_ entry: UnsafeMutablePointer<FTSENT>, _ code: Int32) {
             failures += 1
-            if first == nil { first = "\(String(cString: entry.pointee.fts_path)): \(String(cString: strerror(code)))" }
+            guard first == nil else { return }
+            // Named inside the item ("locked/file"), which the report already shows.
+            let full = String(cString: entry.pointee.fts_path)
+            let inside = full.hasPrefix(path + "/") ? String(full.dropFirst(path.count + 1)) : full
+            first = "\(inside.terminalInline): \(String(cString: strerror(code)))"
         }
         while let entry = fts_read(stream) {
             let entryPath = entry.pointee.fts_path!
@@ -90,7 +94,8 @@ public enum Remover {
                 // folder can't be removed.
                 if let info = entry.pointee.fts_statp?.pointee, info.st_dev != device { fts_set(stream, entry, FTS_SKIP); fail(entry, EXDEV) }
             case FTS_DP:
-                if rmdir(entryPath) != 0, errno != ENOENT { fail(entry, errno) }
+                // A folder left non-empty by a failure inside it isn't another failure.
+                if rmdir(entryPath) != 0, errno != ENOENT, !(errno == ENOTEMPTY && failures > 0) { fail(entry, errno) }
             case FTS_DNR, FTS_ERR, FTS_NS:
                 fail(entry, entry.pointee.fts_errno)
             default:

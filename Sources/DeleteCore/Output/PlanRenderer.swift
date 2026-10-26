@@ -4,8 +4,7 @@ public enum PlanRenderer {
     /// What will be deleted and why, in the order: items, items needing sudo, name-only matches,
     /// kept items, other actions, notes.
     public static func text(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool, home: URL) -> String {
-        let deleting = plan.selected(includeNameMatches: includeNameMatches).filter { isRoot || !$0.needsRoot }
-        let needingRoot = isRoot ? [] : plan.selected(includeNameMatches: includeNameMatches).filter(\.needsRoot)
+        let (deleting, needingRoot) = plan.split(includeNameMatches: includeNameMatches, isRoot: isRoot)
         let nameOnly = includeNameMatches ? [] : plan.findings.filter { $0.tier == .name }
 
         // One set of column widths for every listed item, so sizes line up across sections.
@@ -21,13 +20,15 @@ public enum PlanRenderer {
         }
 
         let application = plan.application
-        let total = deleting.reduce(Int64(0)) { $0 + $1.size }
+        let total = (deleting + needingRoot).reduce(Int64(0)) { $0 + $1.size }
         var header = [application.name.terminalInline, application.version?.terminalInline, Format.size(total), "(\(sourceLabel(application.source)))"].compactMap { $0 }.joined(separator: "   ")
         if plan.running { header += "   running" }
         var lines = [header]
-        if !deleting.isEmpty { lines += [""] + ordered(deleting, application: application).map(row) }
+        if !deleting.isEmpty { lines += [""] + ordered(deleting, plan: plan).map(row) }
 
-        if !needingRoot.isEmpty {
+        if plan.appNeedsRoot(isRoot: isRoot) {
+            lines += ["", "  \(application.name.terminalInline) itself needs administrator rights, so all of this needs sudo:"] + ordered(needingRoot, plan: plan).map(row)
+        } else if !needingRoot.isEmpty {
             lines += ["", "  Needs administrator rights (run with sudo to include these):"] + needingRoot.map(row)
         }
         if !nameOnly.isEmpty {
@@ -55,7 +56,7 @@ public enum PlanRenderer {
 
     /// The confirmation question, or nil when there's nothing to delete.
     public static func question(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool) -> String? {
-        let deleting = plan.selected(includeNameMatches: includeNameMatches).filter { isRoot || !$0.needsRoot }
+        let deleting = plan.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting
         guard !deleting.isEmpty else { return nil }
         let total = deleting.reduce(Int64(0)) { $0 + $1.size }
         return "Permanently delete \(count(deleting.count, "item")) (\(Format.size(total)))? [y/N] "
@@ -103,9 +104,8 @@ public enum PlanRenderer {
     }
 
     /// The app's own bundle first, then everything else by path.
-    private static func ordered(_ findings: [Finding], application: InstalledApp) -> [Finding] {
-        let own = Set([application.path, application.bundlePath].map { $0.lowercased() })
-        return findings.filter { own.contains($0.path.lowercased()) || $0.reason == "Steam game folder" } + findings.filter { !own.contains($0.path.lowercased()) && $0.reason != "Steam game folder" }
+    private static func ordered(_ findings: [Finding], plan: RemovalPlan) -> [Finding] {
+        findings.filter(plan.isOwn) + findings.filter { !plan.isOwn($0) }
     }
 
     private static func display(_ path: String, home: URL) -> String { Format.path(path, home: home).terminalInline }
