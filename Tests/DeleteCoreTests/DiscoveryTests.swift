@@ -187,6 +187,15 @@ final class MatcherTests: XCTestCase {
         guard case .notFound = AppMatcher.match("nothing", in: applications, home: home) else { return XCTFail() }
     }
 
+    /// Without the question (-y), a prefix never picks the app.
+    func testPrefixesAreRefusedWhenThereIsNoQuestion() {
+        guard case let .prefixOnly(application) = AppMatcher.match("ray", in: applications, home: home, allowPrefix: false) else { return XCTFail("expected a refused prefix") }
+        XCTAssertEqual(application.name, "Raycast")
+        XCTAssertEqual(name(AppMatcher.match("raycast", in: applications, home: home, allowPrefix: false)), "/Applications/Raycast.app", "the full name still works")
+        XCTAssertEqual(name(AppMatcher.match("com.raycast.macos", in: applications, home: home, allowPrefix: false)), "/Applications/Raycast.app")
+        guard case .ambiguous = AppMatcher.match("co", in: applications, home: home, allowPrefix: false) else { return XCTFail("ambiguity is still reported") }
+    }
+
     func testTheSameNameInTwoUserFoldersIsAmbiguous() {
         let twins = [app("Notes Pro", id: "com.example.notes"), app("Notes Pro", id: "com.example.notes", path: "/Users/tester/Applications/Notes Pro.app")]
         guard case let .ambiguous(candidates) = AppMatcher.match("notes pro", in: twins, home: home) else { return XCTFail("expected ambiguity") }

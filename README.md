@@ -13,7 +13,7 @@ delete <app>                      # show the plan, ask once, delete
 sudo delete <app>                 # when the app or some of its files belong to root
 ```
 
-`<app>` is a name, a bundle identifier, or a path, matched case-insensitively. A unique name prefix is enough; anything ambiguous lists the candidates and stops.
+`<app>` is a name, a bundle identifier, or a path, matched case-insensitively. A unique name prefix is enough, except with `-y`, which needs the full name, identifier or path; anything ambiguous lists the candidates and stops.
 
 ```
 FL Studio 2026   26.1.5.5384   2.7 GB   (Installer package)

@@ -55,7 +55,12 @@ public enum DeleteCLI {
             return inventory.complete ? EXIT_SUCCESS : EXIT_FAILURE
         case let .remove(query):
             let inventory = Inventory.load(roots: roots, sizes: false, timing: timing)
-            switch AppMatcher.match(query, in: inventory.applications, home: roots.home) {
+            // Only a plan that's shown and answered may come from a name prefix.
+            let allowPrefix = invocation.dryRun || !invocation.assumeYes
+            switch AppMatcher.match(query, in: inventory.applications, home: roots.home, allowPrefix: allowPrefix) {
+            case let .prefixOnly(application):
+                printError("\"\(query.terminalInline)\" only matches the start of \(application.name.terminalInline)'s name. With -y, give its full name, bundle identifier or path.")
+                return EXIT_FAILURE
             case .notFound:
                 printError("No app matches \"\(query.terminalInline)\". Run \"delete list\" to see installed apps.")
                 return EXIT_FAILURE

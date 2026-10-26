@@ -3,13 +3,17 @@ import Foundation
 public enum MatchResult: Sendable {
     case found(InstalledApp)
     case ambiguous([InstalledApp])
+    /// Only a name prefix matched, and prefixes weren't allowed.
+    case prefixOnly(InstalledApp)
     case notFound
 }
 
 /// Resolves what the user typed: a path, a bundle identifier, or a name, case-insensitively.
 /// An exact name or identifier wins; otherwise a unique name prefix is enough.
 public enum AppMatcher {
-    public static func match(_ query: String, in applications: [InstalledApp], home: URL) -> MatchResult {
+    /// `allowPrefix` is false for `-y`: deleting without a question needs the app's full name,
+    /// identifier or path, so a short prefix can't pick an app nobody looked at.
+    public static func match(_ query: String, in applications: [InstalledApp], home: URL, allowPrefix: Bool = true) -> MatchResult {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .notFound }
         if trimmed.contains("/") { return matchPath(trimmed, in: applications, home: home) }
@@ -33,7 +37,7 @@ public enum AppMatcher {
         prefixed = Inventory.foldingSteamShortcuts(prefixed)
         switch prefixed.count {
         case 0: return .notFound
-        case 1: return .found(prefixed[0])
+        case 1: return allowPrefix ? .found(prefixed[0]) : .prefixOnly(prefixed[0])
         default: return .ambiguous(prefixed)
         }
     }
