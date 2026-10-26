@@ -189,7 +189,12 @@ check)
         *.pkg)
             report "package file" "/Library/Application Support/$id"
             report "launch daemon" "/Library/LaunchDaemons/$id.daemon.plist"
-            launchctl print "system/$id.daemon" >/dev/null 2>&1 && print "  LEFT   launch daemon $id.daemon is still loaded"
+            # Only root may look into the system domain.
+            if (( EUID == 0 )); then
+                if launchctl print "system/$id.daemon" >/dev/null 2>&1; then print "  LEFT   launch daemon $id.daemon is still loaded"; fi
+            else
+                print "  ?      whether launch daemon $id.daemon is loaded: run with sudo to check"
+            fi
             pkgutil --pkg-info "$id" >/dev/null 2>&1 && print "  LEFT   installer receipt $id" ;;
         esac
         if pgrep -f "/$name.app/Contents/MacOS/DeleteTest" >/dev/null; then print "  LEFT   still running"; fi
