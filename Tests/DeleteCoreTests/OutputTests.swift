@@ -87,4 +87,26 @@ final class CLITests: XCTestCase {
         XCTAssertFalse(text.contains("\u{1B}"))
         XCTAssertTrue(text.hasPrefix("EvilApp"))
     }
+
+    /// Every path lines up when nothing limits the width; on a narrow terminal the column stops
+    /// where the sizes still fit, and longer paths run past it.
+    func testPlanColumnsFollowTheWidth() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        try system.touch("Users/tester/Library/Preferences/com.example.app.plist")
+        try system.touch("Users/tester/Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json")
+        try system.writeJSON(["path": system.applications.appending(path: "Example.app/Contents/MacOS/proxy").path], to: system.home.appending(path: "Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json"))
+        let plan = try system.plan("Example")
+        let rows = { (width: Int?) in PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home, width: width).split(separator: "\n").filter { $0.hasPrefix("  /") || $0.hasPrefix("  ~") } }
+        let sizeColumns = Set(rows(nil).map { row in row.range(of: " KB")?.lowerBound.utf16Offset(in: row) ?? row.range(of: " B")?.lowerBound.utf16Offset(in: row) ?? -1 })
+        XCTAssertEqual(sizeColumns.count, 1, "aligned: \(rows(nil))")
+        XCTAssertTrue(rows(60).contains { $0.count > 60 }, "a long path runs past a narrow terminal rather than being cut")
+    }
+
+    func testProtectedItemsSayWhyTheyStay() throws {
+        let system = try FakeSystem()
+        XCTAssertTrue(Protection.protectedReason(system.home.appending(path: "Library/Application Support/Steam").path, roots: system.roots).hasPrefix("Steam's own folder"))
+        XCTAssertEqual(Protection.protectedReason(system.home.appending(path: "Documents/Example").path, roots: system.roots), "in your documents")
+        XCTAssertEqual(Protection.protectedReason(system.home.appending(path: "Library/Caches").path, roots: system.roots), "protected location")
+    }
 }

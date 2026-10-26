@@ -408,7 +408,8 @@ struct Collector {
             let lowered = finding.path.lowercased()
             let isExempt = exempt.contains(lowered)
             if !isExempt, Protection.isProtected(finding.path, roots: roots) {
-                if finding.tier == .exact { skip(finding.path, "protected location") }
+                // Said for name matches too: deleting Steam keeps Steam's folder and its games.
+                skip(finding.path, Protection.protectedReason(finding.path, roots: roots))
                 continue
             }
             if !isExempt, lowerOthers.contains(where: { $0 == lowered || $0.hasPrefix(lowered + "/") || lowered.hasPrefix($0 + "/") }) {

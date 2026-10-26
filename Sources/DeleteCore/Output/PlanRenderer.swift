@@ -3,14 +3,17 @@ import Foundation
 public enum PlanRenderer {
     /// What will be deleted and why, in the order: items, items needing sudo, name-only matches,
     /// kept items, other actions, notes.
-    public static func text(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool, home: URL) -> String {
+    /// `width` is the terminal's, when output goes to one: paths are aligned to the longest that
+    /// still leaves room for the sizes. Otherwise (a file, a pipe) every path is aligned.
+    public static func text(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool, home: URL, width: Int? = nil) -> String {
         let (deleting, needingRoot) = plan.split(includeNameMatches: includeNameMatches, isRoot: isRoot)
         let nameOnly = includeNameMatches ? [] : plan.findings.filter { $0.tier == .name }
 
         // One set of column widths for every listed item, so sizes line up across sections.
         let listed = deleting + needingRoot + nameOnly
-        let pathWidth = min(70, listed.map { display($0.path, home: home).terminalDisplayWidth }.max() ?? 0)
         let sizeWidth = listed.map { size($0).count }.max() ?? 0
+        let longest = listed.map { display($0.path, home: home).terminalDisplayWidth }.max() ?? 0
+        let pathWidth = width.map { min(longest, max(40, $0 - sizeWidth - 6)) } ?? longest
         func row(_ finding: Finding) -> String {
             let path = display(finding.path, home: home)
             let padding = String(repeating: " ", count: max(2, pathWidth - path.terminalDisplayWidth + 2))

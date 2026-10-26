@@ -54,6 +54,21 @@ public enum Protection {
 
     /// Paths delete never removes, whatever matched them: the user's own documents and shared
     /// data, system locations, and the standard folders themselves.
+    /// Why a protected path is kept, in the user's terms.
+    static func protectedReason(_ path: String, roots: Roots) -> String {
+        let lowered = URL(filePath: path).standardizedFileURL.path.lowercased()
+        let home = roots.home.standardizedFileURL.path.lowercased()
+        if lowered == home + "/library/application support/steam" || lowered.hasPrefix(home + "/library/application support/steam/") {
+            return "Steam's own folder, which holds every game: delete games one by one (delete <game>)"
+        }
+        for (folder, what) in [("documents", "your documents"), ("desktop", "your desktop"), ("downloads", "your downloads"), ("music", "your music"), ("movies", "your movies"),
+                               ("pictures", "your pictures"), ("library/mobile documents", "iCloud Drive"), ("library/cloudstorage", "cloud storage")]
+        where lowered == home + "/" + folder || lowered.hasPrefix(home + "/" + folder + "/") {
+            return "in \(what)"
+        }
+        return "protected location"
+    }
+
     /// Checked against the injected roots (tests, the sandbox) and always against the real system's
     /// own folders too, so a path from outside the roots (a zap list naming "/Applications") is
     /// still protected.

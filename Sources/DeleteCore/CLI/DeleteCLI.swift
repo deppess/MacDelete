@@ -119,7 +119,7 @@ public enum DeleteCLI {
                 }
                 return EXIT_SUCCESS
             }
-            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
+            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
             let needsSudo = !plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot.isEmpty
             let hint = plan.appNeedsRoot(isRoot: isRoot) ? " Deleting it needs: sudo delete \(shellQuoted(application.path))" : needsSudo ? " Run with sudo to include the items that need administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
@@ -133,7 +133,7 @@ public enum DeleteCLI {
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
         if !plan.activeSystemExtensions.isEmpty, sandbox == nil {
-            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
+            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
             printError("\nTurn off \(name)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
             return EXIT_FAILURE
         }
@@ -156,7 +156,7 @@ public enum DeleteCLI {
             if sandbox != nil { plan.running = false }
         }
 
-        print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home))
+        print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
         let (selected, needingRoot) = plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot)
         guard let question = PlanRenderer.question(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot) else {
             let reason = plan.appNeedsRoot(isRoot: isRoot) ? "\(name) itself needs administrator rights" : "Everything left needs administrator rights"
@@ -182,6 +182,14 @@ public enum DeleteCLI {
             recording.recorded.forEach { print("  \($0)") }
         }
         return report.failed.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
+    }
+
+    /// Standard output's width in columns when it's a terminal, nil otherwise.
+    static var terminalWidth: Int? {
+        guard isatty(STDOUT_FILENO) == 1 else { return nil }
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else { return nil }
+        return Int(size.ws_col)
     }
 
     /// Asks a yes/no question on the terminal. Only "y" or "yes" is yes; no terminal, an empty
