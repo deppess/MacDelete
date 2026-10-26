@@ -1,0 +1,206 @@
+#!/bin/zsh
+# Disposable apps for testing real deletions, with every file they create known in advance, so a
+# deletion can be checked for anything left behind. Nothing here touches a real app.
+#
+#   Scripts/testapps plain      DeleteTest Plain: ~/Applications, running, a loaded launch agent
+#   Scripts/testapps brew       DeleteTest Brew: a Homebrew cask from a local tap (no network),
+#                               with a zap list and an rmdir vendor folder holding another product
+#   Scripts/testapps package    DeleteTest Package: builds a .pkg (root-owned app, /Library files,
+#                               a loaded launch daemon, a receipt); you install it with sudo
+#   Scripts/testapps check      what's left of each test app, and what must survive
+#   Scripts/testapps untap      removes the local Homebrew tap once DeleteTest Brew is gone
+set -euo pipefail
+
+project=${0:A:h:h}
+out=$project/.build/testapps
+library=$HOME/Library
+tap=deppes/delete-test
+mkdir -p "$out"
+
+# One small binary shared by every test app.
+binary() {
+    local source=$project/Scripts/TestApp/main.swift
+    if [[ ! -x $out/DeleteTest || $source -nt $out/DeleteTest ]]; then
+        swiftc -O -o "$out/DeleteTest" "$source"
+    fi
+}
+
+# make_app <name> <bundle id> <folder>: an ad-hoc signed bundle.
+make_app() {
+    local name=$1 identifier=$2 app="$3/$1.app"
+    binary
+    rm -rf -- "$app"
+    mkdir -p "$app/Contents/MacOS"
+    cp "$out/DeleteTest" "$app/Contents/MacOS/DeleteTest"
+    local info=$app/Contents/Info.plist
+    plutil -create xml1 "$info"
+    plutil -insert CFBundleIdentifier -string "$identifier" "$info"
+    plutil -insert CFBundleName -string "$name" "$info"
+    plutil -insert CFBundleExecutable -string DeleteTest "$info"
+    plutil -insert CFBundlePackageType -string APPL "$info"
+    plutil -insert CFBundleShortVersionString -string 1.0 "$info"
+    plutil -insert LSUIElement -bool true "$info"
+    codesign -f -s - "$app" 2>/dev/null
+}
+
+# launch_item <plist> <label> <program>: runs the app with --agent, never at load.
+launch_item() {
+    local plist=$1
+    plutil -create xml1 "$plist"
+    plutil -insert Label -string "$2" "$plist"
+    plutil -insert ProgramArguments -array "$plist"
+    plutil -insert ProgramArguments.0 -string "$3" "$plist"
+    plutil -insert ProgramArguments.1 -string --agent "$plist"
+    plutil -insert RunAtLoad -bool false "$plist"
+}
+
+command=${1:-}
+case $command in
+plain)
+    app="$HOME/Applications/DeleteTest Plain.app"
+    mkdir -p "$HOME/Applications" "$library/LaunchAgents"
+    make_app "DeleteTest Plain" com.macdelete.test.plain "$HOME/Applications"
+    agent=$library/LaunchAgents/com.macdelete.test.plain.agent.plist
+    launchctl bootout "gui/$UID" "$agent" 2>/dev/null || true
+    launch_item "$agent" com.macdelete.test.plain.agent "$app/Contents/MacOS/DeleteTest"
+    launchctl bootstrap "gui/$UID" "$agent"
+    open -g "$app"
+    sleep 1
+    print "Installed DeleteTest Plain (running, launch agent loaded). Try: delete --dry-run \"DeleteTest Plain\""
+    ;;
+brew)
+    staging=$out/brew
+    rm -rf -- "$staging"; mkdir -p "$staging"
+    make_app "DeleteTest Brew" com.macdelete.test.brew "$staging"
+    rm -f "$out/DeleteTestBrew.zip"
+    ditto -c -k --keepParent "$staging/DeleteTest Brew.app" "$out/DeleteTestBrew.zip"
+    repository=$(brew --repository)
+    tapdir=$repository/Library/Taps/${tap%%/*}/homebrew-${tap##*/}
+    [[ -d $tapdir ]] || brew tap-new --no-git "$tap" >/dev/null
+    mkdir -p "$tapdir/Casks"
+    cat > "$tapdir/Casks/deletetest-brew.rb" <<EOF
+cask "deletetest-brew" do
+  version "1.0"
+  sha256 :no_check
+
+  url "file://$out/DeleteTestBrew.zip"
+  name "DeleteTest Brew"
+  desc "Disposable app for testing macdelete"
+  homepage "https://example.invalid/"
+
+  app "DeleteTest Brew.app"
+
+  zap trash: [
+        "~/Library/Application Support/DeleteTest Vendor/Brew",
+        "~/Library/Preferences/com.macdelete.test.brew.plist",
+      ],
+      rmdir: "~/Library/Application Support/DeleteTest Vendor"
+end
+EOF
+    HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 brew install --cask "$tap/deletetest-brew"
+    # The zap list's own folder, and another product's data in the shared vendor folder: the
+    # rmdir must leave the vendor folder because of it.
+    mkdir -p "$library/Application Support/DeleteTest Vendor/Brew" "$library/Application Support/DeleteTest Vendor/Other Product"
+    print "state" > "$library/Application Support/DeleteTest Vendor/Brew/state.txt"
+    print "must survive" > "$library/Application Support/DeleteTest Vendor/Other Product/keep.txt"
+    # Homebrew quarantines what it installs, and Gatekeeper rejects an ad-hoc signed app; this
+    # one was built here, so its quarantine flag is cleared.
+    for app in "$HOME/Applications/DeleteTest Brew.app" "/Applications/DeleteTest Brew.app"; do
+        [[ -d $app ]] && xattr -dr com.apple.quarantine "$app" && open -g "$app"
+    done
+    sleep 1
+    print "Installed DeleteTest Brew (running). Try: delete --dry-run \"DeleteTest Brew\""
+    ;;
+package)
+    root=$out/pkgroot scripts=$out/pkgscripts
+    rm -rf -- "$root" "$scripts"
+    mkdir -p "$root/Applications" "$root/Library/Application Support/com.macdelete.test.pkg" "$root/Library/LaunchDaemons" "$scripts"
+    make_app "DeleteTest Package" com.macdelete.test.pkg "$root/Applications"
+    print "installed by the package" > "$root/Library/Application Support/com.macdelete.test.pkg/data.txt"
+    launch_item "$root/Library/LaunchDaemons/com.macdelete.test.pkg.daemon.plist" com.macdelete.test.pkg.daemon "/Applications/DeleteTest Package.app/Contents/MacOS/DeleteTest"
+    cat > "$scripts/postinstall" <<'EOF'
+#!/bin/sh
+launchctl bootstrap system /Library/LaunchDaemons/com.macdelete.test.pkg.daemon.plist 2>/dev/null || true
+exit 0
+EOF
+    chmod +x "$scripts/postinstall"
+    # Not relocatable: installed where the package says, never onto a copy found elsewhere.
+    pkgbuild --analyze --root "$root" "$out/components.plist" >/dev/null
+    plutil -replace 0.BundleIsRelocatable -bool false "$out/components.plist"
+    pkgbuild --root "$root" --component-plist "$out/components.plist" --scripts "$scripts" --identifier com.macdelete.test.pkg --version 1.0 \
+        --install-location / --ownership recommended "$out/built.pkg" >/dev/null 2>&1
+    # pkgbuild stores extended attributes (macOS gives files made here a com.apple.provenance it
+    # won't remove) as ._ files, which would be installed into /Library and /. The payload and its
+    # file list are made again with cpio and mkbom, which write none, owned by root:wheel.
+    expanded=$out/expanded
+    rm -rf -- "$expanded" "$out/DeleteTestPackage.pkg"
+    pkgutil --expand "$out/built.pkg" "$expanded"
+    (cd "$root" && find . | cpio -o --format odc -R 0:0 2>/dev/null | gzip -c) > "$expanded/Payload"
+    mkbom "$root" "$out/user.bom"
+    # Everything is root:wheel, except folders that already exist on this Mac (/Applications is
+    # root:admin 775), which keep exactly what they have: installing must never change them.
+    lsbom "$out/user.bom" | while IFS=$'\t' read -r entry mode owner rest; do
+        existing=/${entry#./}
+        if [[ $entry != . && -d $existing ]]; then
+            mode=$(stat -f %p "$existing") owner=$(stat -f %u/%g "$existing")
+        else
+            owner=0/0
+        fi
+        print -r -- "$entry"$'\t'"$mode"$'\t'"$owner"${rest:+$'\t'$rest}
+    done > "$out/files.txt"
+    mkbom -i "$out/files.txt" "$expanded/Bom"
+    rm -f "$out/user.bom" "$out/files.txt"
+    if lsbom -s "$expanded/Bom" | grep -q '\._'; then print -u2 "The file list still holds ._ files; not using it."; exit 1; fi
+    count=$(find "$root" | wc -l | tr -d ' ')
+    sed -i '' -E -e "s/numberOfFiles=\"[0-9]+\"/numberOfFiles=\"$count\"/" -e 's/overwrite-permissions="true"/overwrite-permissions="false"/' "$expanded/PackageInfo"
+    pkgutil --flatten "$expanded" "$out/DeleteTestPackage.pkg"
+    rm -rf -- "$expanded" "$out/built.pkg"
+    print "Built $out/DeleteTestPackage.pkg. Install it yourself (needs your password):"
+    print "  sudo installer -pkg ${(q)out}/DeleteTestPackage.pkg -target /"
+    print "then launch it once:  open -g \"/Applications/DeleteTest Package.app\""
+    ;;
+check)
+    cache=$(getconf DARWIN_USER_CACHE_DIR) temp=$(getconf DARWIN_USER_TEMP_DIR)
+    report() {  # report <label> <path>
+        [[ -e $2 || -L $2 ]] && print "  LEFT   $1: ${2/#$HOME/~}"
+        return 0
+    }
+    for entry in "Plain:com.macdelete.test.plain" "Brew:com.macdelete.test.brew" "Package:com.macdelete.test.pkg"; do
+        name="DeleteTest ${entry%%:*}" id=${entry#*:}
+        print "$name ($id)"
+        report app "$HOME/Applications/$name.app"; report app "/Applications/$name.app"
+        for folder in "Application Support" Caches Logs HTTPStorages WebKit "Saved Application State"; do report data "$library/$folder/$id"; done
+        report data "$library/Preferences/$id.plist"
+        report data "$library/Saved Application State/$id.savedState"
+        report temp "${cache%/}/$id"; report temp "${temp%/}/$id"
+        [[ -e "$library/Application Support/$name" ]] && print "  NAME   ~/Library/Application Support/$name (name match: stays unless --include-name-matches)"
+        case $id in
+        *.plain)
+            report "launch agent" "$library/LaunchAgents/$id.agent.plist"
+            launchctl print "gui/$UID/$id.agent" >/dev/null 2>&1 && print "  LEFT   launch agent $id.agent is still loaded" ;;
+        *.brew)
+            report "Homebrew" "$(brew --prefix)/Caskroom/deletetest-brew"
+            report "zap item" "$library/Application Support/DeleteTest Vendor/Brew"
+            if [[ -e "$library/Application Support/DeleteTest Vendor/Other Product/keep.txt" ]]; then
+                print "  OK     other product's data in the vendor folder survived"
+            elif [[ -d "$library/Application Support/DeleteTest Vendor" ]]; then
+                print "  WRONG  other product's data in the vendor folder is gone"
+            fi ;;
+        *.pkg)
+            report "package file" "/Library/Application Support/$id"
+            report "launch daemon" "/Library/LaunchDaemons/$id.daemon.plist"
+            launchctl print "system/$id.daemon" >/dev/null 2>&1 && print "  LEFT   launch daemon $id.daemon is still loaded"
+            pkgutil --pkg-info "$id" >/dev/null 2>&1 && print "  LEFT   installer receipt $id" ;;
+        esac
+        pgrep -f "/$name.app/Contents/MacOS/DeleteTest" >/dev/null && print "  LEFT   still running"
+    done
+    ;;
+untap)
+    if brew list --cask deletetest-brew >/dev/null 2>&1; then print -u2 "DeleteTest Brew is still installed; delete it first."; exit 1; fi
+    brew untap "$tap" && print "Removed the $tap tap."
+    ;;
+*)
+    print -u2 "usage: Scripts/testapps plain | brew | package | check | untap"
+    exit 2
+    ;;
+esac
