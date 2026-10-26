@@ -192,7 +192,7 @@ check)
             launchctl print "system/$id.daemon" >/dev/null 2>&1 && print "  LEFT   launch daemon $id.daemon is still loaded"
             pkgutil --pkg-info "$id" >/dev/null 2>&1 && print "  LEFT   installer receipt $id" ;;
         esac
-        pgrep -f "/$name.app/Contents/MacOS/DeleteTest" >/dev/null && print "  LEFT   still running"
+        if pgrep -f "/$name.app/Contents/MacOS/DeleteTest" >/dev/null; then print "  LEFT   still running"; fi
     done
     ;;
 untap)
