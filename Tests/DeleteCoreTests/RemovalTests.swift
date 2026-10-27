@@ -315,5 +315,6 @@ final class ExecutorTests: XCTestCase {
     func testJSONAndYesTogetherAreRejected() {
         XCTAssertThrowsError(try Invocation(arguments: ["Example", "--json", "-y"]))
         XCTAssertNoThrow(try Invocation(arguments: ["Example", "--json", "--dry-run"]))
+        XCTAssertThrowsError(try Invocation(arguments: ["Example", "--json"]), "JSON is a plan, never a deletion")
     }
 }

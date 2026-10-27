@@ -151,95 +151,53 @@ public struct EvidenceFinder: Sendable {
 
         // Steam games: the game's folder and its manifest, and any desktop shortcut.
         for finding in SteamGame.findings(for: application, inventory: inventory, home: roots.home) { collector.add(finding, exempt: true) }
-        var steamFolders: [String] = []
-        var steamLaunchItems: [LaunchItem] = []
+        var emptyFolders: [String] = []
+        var extraLaunchItems: [LaunchItem] = []
         if application.bundleIdentifier?.lowercased() == "com.valvesoftware.steam" {
             let client = SteamGame.client(roots: roots, others: others, collector: &collector)
             // Exempt from the protected-folder rule (they're inside Steam's folder), never from
             // the rule that another installed app's files stay.
             client.findings.forEach { collector.add($0, exempt: true, keepOtherAppsCheck: true) }
             client.skipped.forEach { collector.skip($0.path, $0.reason) }
-            steamFolders = client.emptyFolders
-            steamLaunchItems = client.launchItems
+            emptyFolders += client.emptyFolders
+            extraLaunchItems += client.launchItems
         }
 
         // Homebrew's zap list: exact for a cask Homebrew installed (brew would delete it too),
         // name evidence from the catalog otherwise.
-        var homebrewCask: String?
-        var emptyFolders: [String] = []
-        if case let .homebrew(token, true) = application.source, let cask = inventory.casks.first(where: { $0.token == token }) {
-            homebrewCask = token
-            let zap = HomebrewZap.installedCaskPaths(token: token, prefix: cask.prefix)
-            for pattern in zap.remove {
-                for path in HomebrewZap.expand(pattern, home: roots.home) {
-                    // An item another installed app's identifier names stays, whatever the list says.
-                    switch ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) {
-                    case let .other(owner)?, let .shared(owner)?: collector.skip(path, "also belongs to \(Format.path(owner, home: roots.home))")
-                    default: collector.add(Finding(path: path, tier: .exact, reason: "Homebrew zap"))
-                    }
-                }
-            }
-            for pattern in zap.removeIfEmpty {
-                for path in HomebrewZap.expand(pattern, home: roots.home) where !emptyFolders.contains(path) {
-                    var isDirectory: ObjCBool = false
-                    if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue { emptyFolders.append(path) }
-                }
-            }
-        } else if let match = catalogTask?.value ?? nil {
-            for pattern in match.paths {
-                for path in HomebrewZap.expand(pattern, home: roots.home) {
-                    if case .other? = ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) { continue }
-                    if case .shared? = ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) { continue }
-                    collector.add(Finding(path: path, tier: .name, reason: "Homebrew's list for \(match.token)"))
-                }
-            }
-        }
+        let zap = HomebrewZap.evidence(for: application, casks: inventory.casks, catalog: catalogTask?.value ?? nil, ownership: ownership, home: roots.home)
+        zap.findings.forEach { collector.add($0) }
+        zap.skipped.forEach { collector.skip($0.path, $0.reason) }
+        emptyFolders += zap.emptyFolders
 
         // Items named only by the app's name.
         for finding in nameFindings(application, others: others, collector: &collector) { collector.add(finding) }
 
         timing?.mark("  steam, homebrew, names")
         var findings = collector.finish(otherApplicationPaths: otherPaths)
-        // A folder the zap list removes only when empty is never deleted whole, not even as a name match.
+        // A folder removed only once empty is never deleted whole, not even as a name match.
         let lowerEmpty = Set(emptyFolders.map { $0.lowercased() })
         findings.removeAll { lowerEmpty.contains($0.path.lowercased()) }
         Self.measure(&findings, knownBundle: application.size.map { (application.bundlePath, $0) })
         timing?.mark("  sizes")
         let unreadable = Array(Set(collector.unreadable + findings.filter { !$0.sizeComplete }.map(\.path))).sorted()
 
-        var notes: [String] = []
-        if let placeholder { notes.append("Its bundle identifier \(placeholder.terminalInline) is a template's placeholder that other apps share, so only its name was used to find its files.") }
         let running = RunningApps.isRunning(identifiers: identifiers, bundlePath: application.bundlePath)
         let activeExtensions = activeSystemExtensions(embedded: embedded)
+        var notes: [String] = []
+        if let placeholder { notes.append("Its bundle identifier \(placeholder.terminalInline) is a template's placeholder that other apps share, so only its name was used to find its files.") }
         notes += activeExtensions.map { "Its system extension \($0) is active. Deleting the app doesn't remove it; turn it off in the app (or System Settings › General › Login Items & Extensions) first." }
-        let hasBackgroundItems = ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains { FileManager.default.fileExists(atPath: bundle.appending(path: $0).path) }
-        if hasBackgroundItems { notes.append("Its entries in System Settings › General › Login Items & Extensions are removed by macOS once the app is gone.") }
-        notes += PlanNotes.largeData(findings, roots: roots)
+        notes += PlanNotes.notes(for: application, bundle: bundle, findings: findings, others: others, roots: roots)
         PlanNotes.cloudData(identifiers: identifiers, names: [application.name] + application.alternateNames, roots: roots).forEach { collector.skip($0.path, $0.reason) }
         PlanNotes.kernelExtensions(ownership: ownership, roots: roots).forEach { collector.skip($0.path, $0.reason) }
-        let audioPlugins = findings.filter { $0.reason == "audio plug-in" }.count
-        if audioPlugins > 0 {
-            notes.append("It installed \(audioPlugins) audio plug-in\(audioPlugins == 1 ? "" : "s") that other music apps load too: deleting it removes \(audioPlugins == 1 ? "it" : "them") from those apps as well.")
-        }
-        if findings.contains(where: { $0.reason == "audio driver" }) {
-            notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
-        }
-        // A suite's shared updater outlives its last app (Microsoft AutoUpdate after Office).
-        notes += Self.orphanedUpdaters(after: application, others: others).map {
-            "\($0.name.terminalInline) only updates this vendor's apps, and this is the last one: delete it too with delete \(Format.shellQuoted($0.path))"
-        }
-        if PlanNotes.isInDock(application.path, roots: roots) || PlanNotes.isInDock(application.bundlePath, roots: roots) {
-            notes.append("It's in your Dock, where it will show as a question mark until you drag it out.")
-        }
 
         // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
-        let lowerEmptyFolders = Set((emptyFolders + steamFolders).map { $0.lowercased() })
-        let skipped = collector.skipped.filter { !lowerEmptyFolders.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        let skipped = collector.skipped.filter { !lowerEmpty.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
         var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: packages.packages,
-                               unreadable: unreadable, notes: notes, running: running, homebrewCask: homebrewCask)
+                               unreadable: unreadable, notes: notes, running: running, homebrewCask: zap.cask)
         plan.activeSystemExtensions = activeExtensions
-        plan.emptyFolders = emptyFolders + steamFolders
-        plan.launchItems += steamLaunchItems.filter { item in !plan.launchItems.contains { $0.plist == item.plist } }
+        plan.emptyFolders = emptyFolders
+        plan.launchItems += extraLaunchItems.filter { item in !plan.launchItems.contains { $0.plist == item.plist } }
         return plan
     }
 
@@ -284,25 +242,6 @@ public struct EvidenceFinder: Sendable {
             }
         }
         return result
-    }
-
-    /// Updaters several apps of one vendor share, by identifier, with the vendor prefix they serve.
-    static let sharedUpdaters: [String: String] = [
-        "com.microsoft.autoupdate2": "com.microsoft.", "com.microsoft.autoupdate.fba": "com.microsoft.",
-        "com.google.keystone": "com.google.", "com.google.googleupdater": "com.google.",
-        "com.adobe.acc.adobecreativecloud": "com.adobe.",
-    ]
-
-    /// Shared updaters that only this app still needed: no other app of their vendor remains.
-    static func orphanedUpdaters(after application: InstalledApp, others: [InstalledApp]) -> [InstalledApp] {
-        guard let own = application.bundleIdentifier?.lowercased(), sharedUpdaters[own] == nil else { return [] }
-        return others.filter { updater in
-            guard let identifier = updater.bundleIdentifier?.lowercased(), let prefix = sharedUpdaters[identifier], own.hasPrefix(prefix) else { return false }
-            return !others.contains { other in
-                guard let id = other.bundleIdentifier?.lowercased(), id.hasPrefix(prefix), sharedUpdaters[id] == nil else { return false }
-                return other.classification == .user && !other.isSteamShortcut
-            }
-        }
     }
 
     /// `com.microsoft` from `com.microsoft.errorreporting`.

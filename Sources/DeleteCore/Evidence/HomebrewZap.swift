@@ -3,6 +3,47 @@ import Foundation
 
 /// Homebrew's hand-written `zap` lists: what a cask's maintainers found each app leaves behind.
 enum HomebrewZap {
+    struct Evidence {
+        /// The cask Homebrew uninstalls first, when it installed the app.
+        var cask: String?
+        var findings: [Finding] = []
+        var skipped: [Skipped] = []
+        var emptyFolders: [String] = []
+    }
+
+    /// Exact for a cask Homebrew installed (brew --zap would remove the same), name evidence from
+    /// the catalog's list otherwise. An item another installed app's identifier names stays,
+    /// whatever the list says.
+    static func evidence(for application: InstalledApp, casks: [InstalledCask], catalog: (token: String, paths: [String])?, ownership: Ownership, home: URL) -> Evidence {
+        var result = Evidence()
+        func claimant(_ path: String) -> String? {
+            switch ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) {
+            case let .other(owner)?, let .shared(owner)?: owner
+            default: nil
+            }
+        }
+        if case let .homebrew(token, true) = application.source, let cask = casks.first(where: { $0.token == token }) {
+            result.cask = token
+            let zap = installedCaskPaths(token: token, prefix: cask.prefix)
+            for path in zap.remove.flatMap({ expand($0, home: home) }) {
+                if let owner = claimant(path) {
+                    result.skipped.append(Skipped(path: path, reason: "also belongs to \(Format.path(owner, home: home))"))
+                } else {
+                    result.findings.append(Finding(path: path, tier: .exact, reason: "Homebrew zap"))
+                }
+            }
+            for path in zap.removeIfEmpty.flatMap({ expand($0, home: home) }) where !result.emptyFolders.contains(path) {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue { result.emptyFolders.append(path) }
+            }
+        } else if let catalog {
+            for path in catalog.paths.flatMap({ expand($0, home: home) }) where claimant(path) == nil {
+                result.findings.append(Finding(path: path, tier: .name, reason: "Homebrew's list for \(catalog.token)"))
+            }
+        }
+        return result
+    }
+
     /// The zap paths in an installed cask's own receipt. `brew uninstall --zap` deletes `remove`;
     /// `removeIfEmpty` are its `rmdir` folders, which Homebrew removes only when empty (a vendor
     /// folder, `~/.claude`): never deleted with their contents.

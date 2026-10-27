@@ -110,6 +110,9 @@ public enum DeleteCLI {
         timing?.mark("find leftovers")
         let isRoot = geteuid() == 0 && sandbox == nil
         let name = application.name.terminalInline
+        func render(_ plan: RemovalPlan) -> String {
+            PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth)
+        }
 
         if invocation.dryRun {
             if invocation.json {
@@ -119,21 +122,16 @@ public enum DeleteCLI {
                 }
                 return EXIT_SUCCESS
             }
-            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
+            print(render(plan))
             let needsSudo = !plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot.isEmpty
-            let hint = plan.appNeedsRoot(isRoot: isRoot) ? " Deleting it needs: sudo delete \(shellQuoted(application.path))" : needsSudo ? " Run with sudo to include the items that need administrator rights." : ""
+            let hint = plan.appNeedsRoot(isRoot: isRoot) ? " Deleting it needs: sudo delete \(Format.shellQuoted(application.path))" : needsSudo ? " Run with sudo to include the items that need administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
         }
-        guard !invocation.json else {
-            printError("--json applies to \"delete list\" and --dry-run.")
-            return 2
-        }
-
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
         if !plan.activeSystemExtensions.isEmpty, sandbox == nil {
-            print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
+            print(render(plan))
             printError("\nTurn off \(name)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
             return EXIT_FAILURE
         }
@@ -156,11 +154,11 @@ public enum DeleteCLI {
             if sandbox != nil { plan.running = false }
         }
 
-        print(PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth))
+        print(render(plan))
         let (selected, needingRoot) = plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot)
         guard let question = PlanRenderer.question(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot) else {
             let reason = plan.appNeedsRoot(isRoot: isRoot) ? "\(name) itself needs administrator rights" : "Everything left needs administrator rights"
-            printError("\n\(reason), so nothing was deleted. Run: sudo delete \(shellQuoted(application.path))")
+            printError("\n\(reason), so nothing was deleted. Run: sudo delete \(Format.shellQuoted(application.path))")
             return EXIT_FAILURE
         }
         // What's deleted must be what was shown: identities are taken before asking.
@@ -175,7 +173,7 @@ public enum DeleteCLI {
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         if !needingRoot.isEmpty, report.stopped == nil {
-            print("\n\(needingRoot.count) item\(needingRoot.count == 1 ? "" : "s") need administrator rights. Run: sudo delete \(shellQuoted(application.path))")
+            print("\n\(needingRoot.count) item\(needingRoot.count == 1 ? "" : "s") need administrator rights. Run: sudo delete \(Format.shellQuoted(application.path))")
         }
         if let recording = actions as? RecordingSystemActions, !recording.recorded.isEmpty {
             print("\nSandbox: would also have run:")
@@ -208,9 +206,6 @@ public enum DeleteCLI {
         let answer = String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return answer == "y" || answer == "yes"
     }
-
-    /// A path as it can be pasted into a shell.
-    static func shellQuoted(_ path: String) -> String { Format.shellQuoted(path) }
 
     static func printError(_ message: String) {
         // Standard output is buffered and standard error isn't; flush so the two stay in order.
@@ -275,7 +270,7 @@ struct Invocation {
         }
         guard positional.count == 1 else { throw UsageError("Name one app at a time.") }
         guard !all else { throw UsageError("--all applies to \"delete list\".") }
-        guard !(json && assumeYes) else { throw UsageError("--json applies to \"delete list\" and --dry-run.") }
+        guard !json || dryRun else { throw UsageError("--json applies to \"delete list\" and --dry-run.") }
         command = .remove(first)
     }
 }

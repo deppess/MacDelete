@@ -66,4 +66,47 @@ enum PlanNotes {
             return Skipped(path: item.path, reason: "its kernel extension: remove it with the vendor's uninstaller, then restart")
         }
     }
+
+    /// Notes about what the app installed and where it shows.
+    static func notes(for application: InstalledApp, bundle: URL, findings: [Finding], others: [InstalledApp], roots: Roots) -> [String] {
+        var notes: [String] = []
+        if ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains(where: { FileManager.default.fileExists(atPath: bundle.appending(path: $0).path) }) {
+            notes.append("Its entries in System Settings › General › Login Items & Extensions are removed by macOS once the app is gone.")
+        }
+        notes += largeData(findings, roots: roots)
+        let audioPlugins = findings.filter { $0.reason == "audio plug-in" }.count
+        if audioPlugins > 0 {
+            notes.append("It installed \(audioPlugins) audio plug-in\(audioPlugins == 1 ? "" : "s") that other music apps load too: deleting it removes \(audioPlugins == 1 ? "it" : "them") from those apps as well.")
+        }
+        if findings.contains(where: { $0.reason == "audio driver" }) {
+            notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
+        }
+        // A suite's shared updater outlives its last app (Microsoft AutoUpdate after Office).
+        notes += orphanedUpdaters(after: application, others: others).map {
+            "\($0.name.terminalInline) only updates this vendor's apps, and this is the last one: delete it too with delete \(Format.shellQuoted($0.path))"
+        }
+        if isInDock(application.path, roots: roots) || isInDock(application.bundlePath, roots: roots) {
+            notes.append("It's in your Dock, where it will show as a question mark until you drag it out.")
+        }
+        return notes
+    }
+
+    /// Updaters several apps of one vendor share, by identifier, with the vendor prefix they serve.
+    static let sharedUpdaters: [String: String] = [
+        "com.microsoft.autoupdate2": "com.microsoft.", "com.microsoft.autoupdate.fba": "com.microsoft.",
+        "com.google.keystone": "com.google.", "com.google.googleupdater": "com.google.",
+        "com.adobe.acc.adobecreativecloud": "com.adobe.",
+    ]
+
+    /// Shared updaters that only this app still needed: no other app of their vendor remains.
+    static func orphanedUpdaters(after application: InstalledApp, others: [InstalledApp]) -> [InstalledApp] {
+        guard let own = application.bundleIdentifier?.lowercased(), sharedUpdaters[own] == nil else { return [] }
+        return others.filter { updater in
+            guard let identifier = updater.bundleIdentifier?.lowercased(), let prefix = sharedUpdaters[identifier], own.hasPrefix(prefix) else { return false }
+            return !others.contains { other in
+                guard let id = other.bundleIdentifier?.lowercased(), id.hasPrefix(prefix), sharedUpdaters[id] == nil else { return false }
+                return other.classification == .user && !other.isSteamShortcut
+            }
+        }
+    }
 }
