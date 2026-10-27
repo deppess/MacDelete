@@ -10,8 +10,12 @@ Deletion is permanent. Nothing goes to the Trash and there is no undo; the plan 
 delete list                       # installed apps with size and source; --all, --json
 delete <app> --dry-run            # what would be deleted and why
 delete <app>                      # show the plan, ask once, delete
-sudo delete <app>                 # when the app or some of its files belong to root
+delete <app> --no-companions      # leave the apps installed with it
 ```
+
+When something in the plan belongs to root, `delete` still asks once, then reruns itself with `sudo`, which asks for your password. The rerun deletes without asking again only if it finds exactly what you confirmed; otherwise it shows the new plan and asks.
+
+Apps installed together with the app go with it, shown under their own heading with the reason: apps in the app's own folder (`/Applications/DaVinci Resolve/`), apps the app's installer package also installed (when the app is the largest of them), and apps whose installer the app's package put on disk (FL Studio ships `FL Cloud Plugins Installer.pkg`). Each must be signed by the same developer. Deleting a companion never takes the app, and other apps by the same developer are only mentioned.
 
 Press Tab after `delete` to complete app names (with version, source and size), bundle identifiers, paths and options. `Scripts/install` sets this up for fish; for zsh, save `delete completions zsh` as `_delete` in a folder on `$fpath`, and for bash add `eval "$(delete completions bash)"` to your profile.
 

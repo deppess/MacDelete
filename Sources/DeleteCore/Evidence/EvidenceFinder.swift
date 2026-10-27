@@ -11,7 +11,9 @@ public struct EvidenceFinder: Sendable {
         self.runner = runner
     }
 
-    public func plan(for application: InstalledApp, inventory: Inventory, timing: Timing? = nil) throws(Refusal) -> RemovalPlan {
+    /// `group` are the paths of apps deleted together with this one (its companions, or the app
+    /// they go with): they don't count as other installed apps, so nothing is kept for them.
+    public func plan(for application: InstalledApp, inventory: Inventory, group: Set<String> = [], timing: Timing? = nil) throws(Refusal) -> RemovalPlan {
         if let refusal = Protection.refusal(for: application) { throw refusal }
         let bundle = URL(filePath: application.bundlePath, directoryHint: .isDirectory)
 
@@ -30,7 +32,7 @@ public struct EvidenceFinder: Sendable {
         // makes it the app's own.
         let lowerOwn = identifiers.map { $0.lowercased() }
         let others = inventory.applications.filter { other in
-            guard other.bundlePath != application.bundlePath, other.path != application.path else { return false }
+            guard other.bundlePath != application.bundlePath, other.path != application.path, !group.contains(other.path) else { return false }
             guard other.classification == .auxiliary, let identifier = other.bundleIdentifier?.lowercased() else { return true }
             return !lowerOwn.contains { identifier.hasPrefix($0 + ".") }
         }

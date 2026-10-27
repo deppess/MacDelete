@@ -62,32 +62,58 @@ public enum PlanRenderer {
         return lines.joined(separator: "\n")
     }
 
+    /// An app's plan, then its companions' (apps installed with it, deleted with it), each with
+    /// why it goes too. `reasons` are by app path.
+    public static func text(_ plans: [RemovalPlan], reasons: [String: String], includeNameMatches: Bool, isRoot: Bool, home: URL, width: Int? = nil) -> String {
+        guard let main = plans.first else { return "" }
+        var parts = [text(main, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width)]
+        if plans.count > 1 {
+            parts.append("Installed with \(main.application.name.terminalInline), so deleted with it (keep \(plans.count == 2 ? "it" : "them") with --no-companions):")
+            for plan in plans.dropFirst() {
+                var lines = text(plan, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
+                if let reason = reasons[plan.application.path] { lines[0] += "   " + reason.terminalInline }
+                parts.append(lines.joined(separator: "\n"))
+            }
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
     /// The confirmation question, or nil when there's nothing to delete.
     public static func question(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool) -> String? {
-        let deleting = plan.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting
+        question([plan], includeNameMatches: includeNameMatches, isRoot: isRoot)
+    }
+
+    public static func question(_ plans: [RemovalPlan], includeNameMatches: Bool, isRoot: Bool) -> String? {
+        let deleting = plans.flatMap { $0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting }
         guard !deleting.isEmpty else { return nil }
         let total = deleting.reduce(Int64(0)) { $0 + $1.size }
-        return "Permanently delete \(count(deleting.count, "item")) (\(Format.size(total)))? [y/N] "
+        let apps = plans.filter { !$0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting.isEmpty }.count
+        return "Permanently delete \(count(deleting.count, "item"))\(apps > 1 ? " of \(apps) apps" : "") (\(Format.size(total)))? [y/N] "
     }
 
     /// The plan for scripts (and `Scripts/sandbox`, which clones exactly these paths).
-    public static func json(_ plan: RemovalPlan) throws -> String {
+    /// Companions follow under "companions", each a plan of its own with the reason it goes too.
+    public static func json(_ plan: RemovalPlan, companions: [(plan: RemovalPlan, reason: String)] = []) throws -> String {
         struct Item: Encodable { let path: String; let tier: String; let reason: String?; let size: Int64; let sizeComplete: Bool; let needsRoot: Bool }
         struct Kept: Encodable { let path: String; let reason: String }
         struct Job: Encodable { let label: String; let plist: String; let domain: String }
         struct Document: Encodable {
             let name: String; let path: String; let bundleIdentifier: String?; let version: String?; let source: String; let homebrewCask: String?
             let identifiers: [String]; let findings: [Item]; let kept: [Kept]; let launchItems: [Job]; let packages: [String]; let unreadable: [String]; let emptyFolders: [String]
-            let activeSystemExtensions: [String]; let running: Bool; let notes: [String]
+            let activeSystemExtensions: [String]; let running: Bool; let notes: [String]; let companionReason: String?; let companions: [Document]?
         }
-        let application = plan.application
-        let document = Document(
-            name: application.name, path: application.path, bundleIdentifier: application.bundleIdentifier, version: application.version, source: application.source.label,
-            homebrewCask: plan.homebrewCask, identifiers: plan.identifiers,
-            findings: plan.findings.map { Item(path: $0.path, tier: $0.tier.rawValue, reason: $0.reason, size: $0.size, sizeComplete: $0.sizeComplete, needsRoot: $0.needsRoot) },
-            kept: plan.skipped.map { Kept(path: $0.path, reason: $0.reason) },
-            launchItems: plan.launchItems.map { Job(label: $0.label, plist: $0.plist, domain: $0.domain.rawValue) },
-            packages: plan.packages, unreadable: plan.unreadable, emptyFolders: plan.emptyFolders, activeSystemExtensions: plan.activeSystemExtensions, running: plan.running, notes: plan.notes)
+        func document(_ plan: RemovalPlan, reason: String?, companions: [Document]?) -> Document {
+            let application = plan.application
+            return Document(
+                name: application.name, path: application.path, bundleIdentifier: application.bundleIdentifier, version: application.version, source: application.source.label,
+                homebrewCask: plan.homebrewCask, identifiers: plan.identifiers,
+                findings: plan.findings.map { Item(path: $0.path, tier: $0.tier.rawValue, reason: $0.reason, size: $0.size, sizeComplete: $0.sizeComplete, needsRoot: $0.needsRoot) },
+                kept: plan.skipped.map { Kept(path: $0.path, reason: $0.reason) },
+                launchItems: plan.launchItems.map { Job(label: $0.label, plist: $0.plist, domain: $0.domain.rawValue) },
+                packages: plan.packages, unreadable: plan.unreadable, emptyFolders: plan.emptyFolders, activeSystemExtensions: plan.activeSystemExtensions, running: plan.running, notes: plan.notes,
+                companionReason: reason, companions: companions)
+        }
+        let document = document(plan, reason: nil, companions: companions.map { document($0.plan, reason: $0.reason, companions: nil) })
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return String(decoding: try encoder.encode(document), as: UTF8.self)

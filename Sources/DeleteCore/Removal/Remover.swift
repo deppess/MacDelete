@@ -70,8 +70,12 @@ public enum Remover {
         return removeTree(path, device: current.device)
     }
 
-    /// Removes a folder only if nothing is in it but a `.DS_Store`: Homebrew's `rmdir`. True when
-    /// it was removed. Anything else (contents, a link, a protected folder) leaves it alone.
+    /// Files Finder keeps in a folder: its view settings, and a custom folder icon ("Icon\r").
+    static func isFinderMetadata(_ name: String) -> Bool { name == ".DS_Store" || name == "Icon\r" }
+
+    /// Removes a folder only if nothing is in it but Finder's files: Homebrew's `rmdir`, and an
+    /// app's own folder once its companions are gone. True when it was removed. Anything else
+    /// (contents, a link, a protected folder) leaves it alone.
     public static func removeIfEmpty(_ path: String, allowedRoot: String, home: URL) -> Bool {
         let root = allowedRoot == "/" ? "" : allowedRoot
         let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
@@ -81,8 +85,8 @@ public enum Remover {
               !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return false }
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-              let names = try? FileManager.default.contentsOfDirectory(atPath: path), names.allSatisfy({ $0 == ".DS_Store" }) else { return false }
-        if names.contains(".DS_Store") { unlink(path + "/.DS_Store") }
+              let names = try? FileManager.default.contentsOfDirectory(atPath: path), names.allSatisfy(isFinderMetadata) else { return false }
+        for name in names { unlink(path + "/" + name) }
         return rmdir(path) == 0
     }
 

@@ -18,6 +18,7 @@ public enum DeleteCLI {
       --dry-run                 Show what would be deleted, delete nothing
       -y, --yes                 Don't ask before deleting
       --include-name-matches    Also delete items matched only by the app's name
+      --no-companions           Leave the apps installed with it (FL Studio's FL Cloud Plugins)
       -h, --help                Show this help
       --version                 Show the version
     """
@@ -86,7 +87,9 @@ public enum DeleteCLI {
         }
     }
 
-    /// Shows the plan, and unless it's a dry run, asks and deletes.
+    /// Shows the plan (the app's and its companions'), and unless it's a dry run, asks and
+    /// deletes. Without root, a plan that needs it is shown whole and, once confirmed, delete
+    /// reruns itself under sudo, which asks for the password.
     static func remove(_ application: InstalledApp, inventory: Inventory, invocation: Invocation, roots: Roots, environment: [String: String], timing: Timing?) -> Int32 {
         // A sandbox run deletes clones under DELETE_SANDBOX instead of the real files.
         var sandbox: Sandbox?
@@ -97,89 +100,174 @@ public enum DeleteCLI {
             }
             sandbox = valid
         }
-        let finder = EvidenceFinder(roots: roots)
-        func makePlan() throws(Refusal) -> RemovalPlan {
-            let plan = try finder.plan(for: application, inventory: inventory, timing: timing)
-            return sandbox.map { $0.translate(plan) } ?? plan
+        let isRoot = geteuid() == 0 && sandbox == nil
+        if invocation.approved != nil, !isRoot {
+            printError("--approved is only for delete's own rerun under sudo.")
+            return 2
         }
-        var plan: RemovalPlan
-        do { plan = try makePlan() } catch {
+
+        // Apps installed with it go with it, unless they can't be deleted at all.
+        let found = invocation.withCompanions && Protection.refusal(for: application) == nil ? Companions.find(for: application, inventory: inventory, roots: roots) : Companions.Result()
+        let companions = found.companions.filter { Protection.refusal(for: $0.application) == nil }
+        var reasons: [String: String] = [:]
+        for companion in companions { reasons[companion.application.path] = companion.reason }
+        let group = Set([application.path] + companions.map(\.application.path))
+        timing?.mark("companions (\(companions.count))")
+
+        let finder = EvidenceFinder(roots: roots)
+        func makePlans() throws(Refusal) -> [RemovalPlan] {
+            // The companions' plans are made while the app's is, one after another: each plan
+            // waits on lookups of its own, and many at once starve the shared threads.
+            let companionPlans = Concurrent { () -> [RemovalPlan] in
+                companions.compactMap { companion in
+                    var other = companion.application
+                    other.source = Inventory.source(of: other, casks: inventory.casks, receipts: inventory.receipts)
+                    return try? finder.plan(for: other, inventory: inventory, group: group)
+                }
+            }
+            var main = try finder.plan(for: application, inventory: inventory, group: group, timing: timing)
+            if let folder = found.folder, !companions.isEmpty { main.emptyFolders.append(folder) }
+            if !found.sameDeveloper.isEmpty {
+                main.notes.append("Also by the same developer, not included: \(found.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
+            }
+            let plans = [main] + companionPlans.value
+            // A companion whose every item another plan already deletes (a helper inside a folder
+            // the app's package installed) has nothing left to show.
+            let distinct = RemovalPlan.deduplicated(plans).enumerated().filter { $0.offset == 0 || !$0.element.findings.isEmpty || !$0.element.packages.isEmpty || !$0.element.launchItems.isEmpty }.map(\.element)
+            return sandbox.map { sandbox in distinct.map(sandbox.translate) } ?? distinct
+        }
+        var plans: [RemovalPlan]
+        do { plans = try makePlans() } catch {
             printError(error.message)
             return EXIT_FAILURE
         }
         timing?.mark("find leftovers")
-        let isRoot = geteuid() == 0 && sandbox == nil
         let name = application.name.terminalInline
-        func render(_ plan: RemovalPlan) -> String {
-            PlanRenderer.text(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot, home: roots.home, width: terminalWidth)
+        func elevates(_ plans: [RemovalPlan]) -> Bool {
+            sandbox == nil && !isRoot && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) }
+        }
+        func render(_ plans: [RemovalPlan], asRoot: Bool) -> String {
+            PlanRenderer.text(plans, reasons: reasons, includeNameMatches: invocation.includeNameMatches, isRoot: asRoot, home: roots.home, width: terminalWidth)
         }
 
         if invocation.dryRun {
             if invocation.json {
-                do { print(try PlanRenderer.json(plan)) } catch {
+                do { print(try PlanRenderer.json(plans[0], companions: plans.dropFirst().map { ($0, reasons[$0.application.path] ?? "") })) } catch {
                     printError("Unable to encode the plan: \(error.localizedDescription)")
                     return EXIT_FAILURE
                 }
                 return EXIT_SUCCESS
             }
-            print(render(plan))
-            let needsSudo = !plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot.isEmpty
-            let hint = plan.appNeedsRoot(isRoot: isRoot) ? " Deleting it needs: sudo delete \(Format.shellQuoted(application.path))" : needsSudo ? " Run with sudo to include the items that need administrator rights." : ""
+            let elevate = elevates(plans)
+            print(render(plans, asRoot: isRoot || elevate))
+            let hint = elevate ? " Deleting it needs administrator rights; delete will ask for your password." : sandbox != nil && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) } ? " Some of it needs administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
         }
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
-        if !plan.activeSystemExtensions.isEmpty, sandbox == nil {
-            print(render(plan))
-            printError("\nTurn off \(name)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
+        if let blocked = plans.first(where: { !$0.activeSystemExtensions.isEmpty }), sandbox == nil {
+            print(render(plans, asRoot: isRoot || elevates(plans)))
+            printError("\nTurn off \(blocked.application.name.terminalInline)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
             return EXIT_FAILURE
         }
 
-        // A running app is asked to quit first, then the plan is made again: apps write files
+        // Running apps are asked to quit first, then the plans are made again: apps write files
         // as they quit.
-        if plan.running {
-            guard invocation.assumeYes || ask("\(name) is running. Quit it? [y/N] ") else {
+        let running = plans.filter(\.running)
+        if !running.isEmpty {
+            let names = running.map { $0.application.name.terminalInline }
+            let question = names.count == 1 ? "\(names[0]) is running. Quit it? [y/N] " : "\(names.dropLast().joined(separator: ", ")) and \(names.last!) are running. Quit them? [y/N] "
+            guard invocation.assumeYes || invocation.approved != nil || ask(question) else {
                 print("Nothing was deleted.")
                 return EXIT_FAILURE
             }
-            if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: application.bundlePath) {
-                printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
-                return EXIT_FAILURE
+            for plan in running {
+                if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
+                    printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
+                    return EXIT_FAILURE
+                }
             }
-            do { plan = try makePlan() } catch {
+            do { plans = try makePlans() } catch {
                 printError(error.message)
                 return EXIT_FAILURE
             }
-            if sandbox != nil { plan.running = false }
+            if sandbox != nil { for index in plans.indices { plans[index].running = false } }
         }
 
-        print(render(plan))
-        let (selected, needingRoot) = plan.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot)
-        guard let question = PlanRenderer.question(plan, includeNameMatches: invocation.includeNameMatches, isRoot: isRoot) else {
-            let reason = plan.appNeedsRoot(isRoot: isRoot) ? "\(name) itself needs administrator rights" : "Everything left needs administrator rights"
-            printError("\n\(reason), so nothing was deleted. Run: sudo delete \(Format.shellQuoted(application.path))")
+        let elevate = elevates(plans)
+        let asRoot = isRoot || elevate
+        let fingerprint = RemovalPlan.fingerprint(plans, includeNameMatches: invocation.includeNameMatches)
+        // Delete's rerun under sudo goes ahead without asking when it found what was confirmed.
+        let confirmed = invocation.approved == fingerprint
+        if let approved = invocation.approved, !confirmed, !approved.isEmpty {
+            print("With administrator rights, more turned up; this is the whole plan now:\n")
+        }
+        if !confirmed { print(render(plans, asRoot: asRoot)) }
+        guard let question = PlanRenderer.question(plans, includeNameMatches: invocation.includeNameMatches, isRoot: asRoot) else {
+            if plans[0].appNeedsRoot(isRoot: asRoot) || plans.contains(where: { !$0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).needingRoot.isEmpty }) {
+                printError("\nEverything here needs administrator rights, which a sandbox run doesn't have, so nothing was deleted.")
+            } else {
+                printError("\nNothing is selected to delete.")
+            }
             return EXIT_FAILURE
         }
         // What's deleted must be what was shown: identities are taken before asking.
-        let targets = Executor.targets(for: selected, translate: sandbox?.translate ?? { $0 })
-        print("")
-        guard invocation.assumeYes || ask(question) else {
-            print("Nothing was deleted.")
-            return EXIT_FAILURE
+        let targets = plans.map { Executor.targets(for: $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).deleting, translate: sandbox?.translate ?? { $0 }) }
+        if !confirmed {
+            if elevate { print("\nSome of this needs administrator rights: macOS will ask for your password.") }
+            print("")
+            guard invocation.assumeYes || ask(question) else {
+                print("Nothing was deleted.")
+                return EXIT_FAILURE
+            }
         }
+        if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
+
+        // Companions first (their launch items stopped and their privacy settings reset while
+        // they're still installed), then the app.
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(plan, targets: targets, isRoot: isRoot, casks: inventory.casks)
+        var report = ExecutionReport()
+        for index in plans.indices.reversed() {
+            let part = executor.run(plans[index], targets: targets[index], isRoot: isRoot, casks: inventory.casks)
+            report.deleted += part.deleted
+            report.failed += part.failed
+            report.removedByHomebrew += part.removedByHomebrew
+            report.warnings += part.warnings
+            if let stopped = part.stopped { report.stopped = [report.stopped, stopped].compactMap { $0 }.joined(separator: "\n") }
+        }
         print("")
         print(PlanRenderer.report(report, home: roots.home))
+        let needingRoot = plans.flatMap { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot }
         if !needingRoot.isEmpty, report.stopped == nil {
-            print("\n\(needingRoot.count) item\(needingRoot.count == 1 ? "" : "s") need administrator rights. Run: sudo delete \(Format.shellQuoted(application.path))")
+            print("\n\(needingRoot.count) item\(needingRoot.count == 1 ? "" : "s") need administrator rights, which a sandbox run doesn't have.")
         }
         if let recording = actions as? RecordingSystemActions, !recording.recorded.isEmpty {
             print("\nSandbox: would also have run:")
             recording.recorded.forEach { print("  \($0)") }
         }
         return report.failed.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
+    }
+
+    /// Replaces this process with `sudo delete --approved <fingerprint> <app path>`: sudo asks
+    /// for the password on the terminal, and the rerun deletes what was confirmed (or shows the
+    /// plan again and asks, if running as root found more). Returns only if that can't start.
+    static func rerunWithSudo(_ application: InstalledApp, fingerprint: String, invocation: Invocation) -> Int32 {
+        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath().path else {
+            printError("Couldn't find delete's own path to rerun it with sudo. Run: sudo delete \(Format.shellQuoted(application.path))")
+            return EXIT_FAILURE
+        }
+        var arguments = ["/usr/bin/sudo", "--", executable, "--approved", fingerprint]
+        if invocation.includeNameMatches { arguments.append("--include-name-matches") }
+        if !invocation.withCompanions { arguments.append("--no-companions") }
+        arguments += ["--", application.path]
+        fflush(stdout)
+        var pointers = arguments.map { strdup($0) } + [nil]
+        execv("/usr/bin/sudo", &pointers)
+        let error = String(cString: strerror(errno))
+        pointers.forEach { free($0) }
+        printError("Couldn't run sudo (\(error)). Run: sudo delete \(Format.shellQuoted(application.path))")
+        return EXIT_FAILURE
     }
 
     /// Standard output's width in columns when it's a terminal, nil otherwise.
@@ -229,6 +317,9 @@ struct Invocation {
     var dryRun = false
     var assumeYes = false
     var includeNameMatches = false
+    var withCompanions = true
+    /// Set by delete's own rerun under sudo: the fingerprint of the plan that was confirmed.
+    var approved: String?
 
     init(arguments: [String]) throws {
         // The word being completed may itself look like an option.
@@ -239,7 +330,8 @@ struct Invocation {
         }
         var positional: [String] = []
         var optionsEnded = false
-        for argument in arguments {
+        var remaining = arguments[...]
+        while let argument = remaining.popFirst() {
             if optionsEnded || !argument.hasPrefix("-") || argument == "-" {
                 positional.append(argument)
                 continue
@@ -253,13 +345,17 @@ struct Invocation {
             case "--dry-run", "-n": dryRun = true
             case "-y", "--yes": assumeYes = true
             case "--include-name-matches": includeNameMatches = true
+            case "--no-companions": withCompanions = false
+            case "--approved":
+                guard let value = remaining.popFirst(), !value.hasPrefix("-") else { throw UsageError("--approved takes a fingerprint.") }
+                approved = value
             default: throw UsageError("Unknown option \(argument).")
             }
         }
         guard let first = positional.first else { command = .help; return }
         if first == "list" && !optionsEnded {
             guard positional.count == 1 else { throw UsageError("\"delete list\" takes no app name.") }
-            guard !dryRun, !assumeYes, !includeNameMatches else { throw UsageError("--dry-run, -y and --include-name-matches apply to deleting an app.") }
+            guard !dryRun, !assumeYes, !includeNameMatches, withCompanions, approved == nil else { throw UsageError("--dry-run, -y, --include-name-matches and --no-companions apply to deleting an app.") }
             command = .list
             return
         }
@@ -271,6 +367,7 @@ struct Invocation {
         guard positional.count == 1 else { throw UsageError("Name one app at a time.") }
         guard !all else { throw UsageError("--all applies to \"delete list\".") }
         guard !json || dryRun else { throw UsageError("--json applies to \"delete list\" and --dry-run.") }
+        guard approved == nil || !dryRun else { throw UsageError("--approved can't be combined with --dry-run.") }
         command = .remove(first)
     }
 }

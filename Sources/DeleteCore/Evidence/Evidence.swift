@@ -88,6 +88,51 @@ public struct RemovalPlan: Sendable {
         if appNeedsRoot(isRoot: isRoot) { return ([], selected) }
         return (selected.filter { !$0.needsRoot }, selected.filter(\.needsRoot))
     }
+
+    /// Whether deleting it needs administrator rights: an item, a receipt, or a system launch item.
+    public func needsRoot(includeNameMatches: Bool) -> Bool {
+        !split(includeNameMatches: includeNameMatches, isRoot: false).needingRoot.isEmpty || !packages.isEmpty || launchItems.contains { $0.domain == .system }
+    }
+
+    /// An app's plan and its companions' with every item, receipt and launch item in only one of
+    /// them: in the plan whose own bundle holds it, otherwise the first that names it (or a
+    /// folder holding it).
+    public static func deduplicated(_ plans: [RemovalPlan]) -> [RemovalPlan] {
+        let bundles = plans.map { [$0.application.path, $0.application.bundlePath].map { $0.lowercased() } }
+        func isInside(_ path: String, _ other: String) -> Bool { path == other || path.hasPrefix(other + "/") }
+        var result: [RemovalPlan] = []
+        var taken: [String] = [], packages = Set<String>(), launchItems = Set<String>(), emptyFolders = Set<String>()
+        for (index, var plan) in plans.enumerated() {
+            plan.findings = plan.findings.filter { finding in
+                let lowered = finding.path.lowercased()
+                let ownedElsewhere = bundles.indices.contains { $0 != index && bundles[$0].contains { isInside(lowered, $0) } }
+                return !ownedElsewhere && !taken.contains { isInside(lowered, $0) }
+            }
+            taken += plan.findings.map { $0.path.lowercased() }
+            plan.packages = plan.packages.filter { packages.insert($0.lowercased()).inserted }
+            plan.launchItems = plan.launchItems.filter { launchItems.insert($0.plist.lowercased()).inserted }
+            plan.emptyFolders = plan.emptyFolders.filter { emptyFolders.insert($0.lowercased()).inserted }
+            result.append(plan)
+        }
+        return result
+    }
+
+    /// What a group of plans deletes, as one short fingerprint: delete, rerun under sudo, deletes
+    /// without asking again only when its plans have the one that was confirmed.
+    public static func fingerprint(_ plans: [RemovalPlan], includeNameMatches: Bool) -> String {
+        var text = ""
+        for plan in plans {
+            text += plan.application.path + "\u{0}"
+            text += plan.selected(includeNameMatches: includeNameMatches).map(\.path).sorted().joined(separator: "\u{0}") + "\u{1}"
+            text += plan.packages.sorted().joined(separator: "\u{0}") + "\u{1}"
+            text += plan.launchItems.map(\.plist).sorted().joined(separator: "\u{0}") + "\u{1}"
+            text += plan.emptyFolders.sorted().joined(separator: "\u{0}") + "\u{1}" + (plan.homebrewCask ?? "") + "\u{2}"
+        }
+        // FNV-1a, 64 bits: a check that nothing changed, not a secret.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+        return String(hash, radix: 16)
+    }
 }
 
 /// Why an app can't be deleted at all.
