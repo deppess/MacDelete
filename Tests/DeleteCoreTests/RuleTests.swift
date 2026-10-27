@@ -267,4 +267,34 @@ final class RuleTests: XCTestCase {
         XCTAssertEqual(try names("Google Drive"), ["\(support)/Google/Drive"])
         XCTAssertEqual(try names("Brave Browser"), ["\(support)/BraveSoftware/Brave-Browser"])
     }
+
+    func testNotesForLargeDataCloudDataDockKextsAndDrivers() throws {
+        let system = try FakeSystem()
+        let bundle = try makeExample(system)
+        var big = Finding(path: system.userLibrary.appending(path: "Containers/com.example.app").path, tier: .exact)
+        big.size = 40_000_000_000
+        var small = Finding(path: system.userLibrary.appending(path: "Caches/com.example.app").path, tier: .exact)
+        small.size = 40_000_000_000
+        XCTAssertEqual(PlanNotes.largeData([big, small], roots: system.roots).count, 1, "only data folders, not caches")
+
+        try system.touch("Users/tester/Library/Mobile Documents/iCloud~com~example~app/Documents/notes.txt")
+        try system.touch("Users/tester/Library/Mobile Documents/iCloud~com~other~app/")
+        try system.touch("Users/tester/Library/CloudStorage/Example-Personal/file")
+        try system.touch("Users/tester/Library/CloudStorage/Dropbox/file")
+        try system.writePlist(["persistent-apps": [["tile-data": ["file-data": ["_CFURLString": bundle.absoluteString, "_CFURLStringType": 15]]]]],
+                              to: system.userLibrary.appending(path: "Preferences/com.apple.dock.plist"))
+        try system.makeApp("ExampleDriver.kext", in: system.library.appending(path: "Extensions"), metadata: ["CFBundleIdentifier": "com.example.app.driver"])
+        try system.makeApp("Example.driver", in: system.library.appending(path: "Audio/Plug-Ins/HAL"), metadata: ["CFBundleIdentifier": "com.example.app.hal"])
+
+        let plan = try system.plan("Example")
+        let kept = Dictionary(plan.skipped.map { (URL(filePath: $0.path).lastPathComponent, $0.reason) }, uniquingKeysWith: { first, _ in first })
+        XCTAssertTrue(kept["iCloud~com~example~app"]?.contains("syncs to your other devices") ?? false, "\(kept)")
+        XCTAssertNil(kept["iCloud~com~other~app"])
+        XCTAssertTrue(kept["Example-Personal"]?.contains("your cloud files") ?? false)
+        XCTAssertNil(kept["Dropbox"])
+        XCTAssertTrue(kept["ExampleDriver.kext"]?.contains("kernel extension") ?? false)
+        XCTAssertFalse(plan.selected(includeNameMatches: true).contains { $0.path.contains("Mobile Documents") || $0.path.contains("CloudStorage") || $0.path.hasSuffix(".kext") })
+        XCTAssertTrue(plan.notes.contains { $0.contains("in your Dock") })
+        XCTAssertTrue(plan.notes.contains { $0.contains("coreaudiod") })
+    }
 }

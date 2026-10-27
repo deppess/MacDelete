@@ -146,7 +146,7 @@ public enum DeleteCLI {
                 return EXIT_FAILURE
             }
             if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: application.bundlePath) {
-                printError("\(names.joined(separator: ", ")) didn't quit. Nothing was deleted.")
+                printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
                 return EXIT_FAILURE
             }
             do { plan = try makePlan() } catch {

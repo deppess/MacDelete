@@ -210,6 +210,15 @@ public struct EvidenceFinder: Sendable {
         notes += activeExtensions.map { "Its system extension \($0) is active. Deleting the app doesn't remove it; turn it off in the app (or System Settings › General › Login Items & Extensions) first." }
         let hasBackgroundItems = ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains { FileManager.default.fileExists(atPath: bundle.appending(path: $0).path) }
         if hasBackgroundItems { notes.append("Its entries in System Settings › General › Login Items & Extensions are removed by macOS once the app is gone.") }
+        notes += PlanNotes.largeData(findings, roots: roots)
+        PlanNotes.cloudData(identifiers: identifiers, names: [application.name] + application.alternateNames, roots: roots).forEach { collector.skip($0.path, $0.reason) }
+        PlanNotes.kernelExtensions(ownership: ownership, roots: roots).forEach { collector.skip($0.path, $0.reason) }
+        if findings.contains(where: { $0.reason == "audio driver" }) {
+            notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
+        }
+        if PlanNotes.isInDock(application.path, roots: roots) || PlanNotes.isInDock(application.bundlePath, roots: roots) {
+            notes.append("It's in your Dock, where it will show as a question mark until you drag it out.")
+        }
 
         // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
         let lowerEmptyFolders = Set((emptyFolders + steamFolders).map { $0.lowercased() })
