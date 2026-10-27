@@ -42,10 +42,7 @@ enum NativeMessaging {
 
     /// The manifest's `path`, normalized so `..` can't step out of the bundle.
     static func program(in manifest: URL) -> String? {
-        var info = stat()
-        guard lstat(manifest.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= 1_048_576,
-              let data = try? Data(contentsOf: manifest),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = SmallFile.json(atPath: manifest.path),
               let path = object["path"] as? String, path.hasPrefix("/") else { return nil }
         return URL(filePath: path).standardizedFileURL.path
     }

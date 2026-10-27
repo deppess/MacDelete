@@ -103,8 +103,7 @@ public struct EvidenceFinder: Sendable {
         let lowerIdentifiers = Set(identifiers.map { $0.lowercased() })
         for name in collector.list(containers) where UUID(uuidString: name) != nil {
             let metadata = containers.appending(path: "\(name)/.com.apple.containermanagerd.metadata.plist")
-            guard let data = try? Data(contentsOf: metadata), data.count <= 1_048_576,
-                  let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            guard let info = SmallFile.plist(atPath: metadata.path),
                   let owner = info["MCMMetadataIdentifier"] as? String, lowerIdentifiers.contains(owner.lowercased()) else { continue }
             collector.add(Finding(path: containers.appending(path: name).path, tier: .exact, reason: "container of \(owner)"))
         }

@@ -70,8 +70,7 @@ public enum EmbeddedBundles {
         var info = stat()
         guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
         let plist = url.appending(path: "Contents/Info.plist")
-        guard let data = try? Data(contentsOf: plist), data.count <= 1_048_576,
-              let metadata = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+        guard let metadata = SmallFile.plist(atPath: plist.path),
               let identifier = (metadata["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               isReverseDNS(identifier), !identifier.lowercased().hasPrefix("org.sparkle-project."),
               seen.insert(identifier.lowercased()).inserted else { return nil }

@@ -8,8 +8,7 @@ enum HomebrewZap {
     /// folder, `~/.claude`): never deleted with their contents.
     static func installedCaskPaths(token: String, prefix: String) -> (remove: [String], removeIfEmpty: [String]) {
         let receipt = URL(filePath: prefix).appending(path: "Caskroom/\(token)/.metadata/INSTALL_RECEIPT.json")
-        guard let data = try? Data(contentsOf: receipt), data.count <= 4 * 1_048_576,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], []) }
+        guard let json = SmallFile.json(atPath: receipt.path, limit: 4 * 1_048_576) else { return ([], []) }
         var remove: [String] = [], removeIfEmpty: [String] = []
         for stanza in json["uninstall_artifacts"] as? [[String: Any]] ?? [] {
             for directive in stanza["zap"] as? [[String: Any]] ?? [] {

@@ -78,8 +78,6 @@ public enum Caskroom {
     }
 
     private static func readJSON(_ url: URL) -> Any? {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 4 * 1_048_576,
-              let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data)
+        SmallFile.data(atPath: url.path, limit: 4 * 1_048_576).flatMap { try? JSONSerialization.jsonObject(with: $0) }
     }
 }

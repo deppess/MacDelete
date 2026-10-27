@@ -47,11 +47,7 @@ enum SteamGame {
         return gameContaining(application.path)
     }
 
-    static func manifestText(_ path: String) -> String? {
-        var info = stat()
-        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= 1_048_576 else { return nil }
-        return try? String(contentsOfFile: path, encoding: .utf8)
-    }
+    static func manifestText(_ path: String) -> String? { SmallFile.text(atPath: path) }
 
     /// The game whose folder holds `path`, from the library's manifests.
     static func gameContaining(_ path: String) -> Game? {
@@ -62,7 +58,7 @@ enum SteamGame {
         let folder = steamapps + "/common/" + installDirectory
         for name in (try? FileManager.default.contentsOfDirectory(atPath: steamapps)) ?? [] where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
             let manifest = steamapps + "/" + name
-            guard let text = try? String(contentsOfFile: manifest, encoding: .utf8), text.utf8.count <= 1_048_576,
+            guard let text = manifestText(manifest),
                   let directory = value("installdir", in: text), directory.caseInsensitiveCompare(installDirectory) == .orderedSame,
                   let appID = value("appid", in: text), appID.allSatisfy(\.isNumber) else { continue }
             return Game(appID: appID, folder: folder, manifest: manifest)
@@ -74,8 +70,7 @@ enum SteamGame {
     static func shortcutAppID(_ application: InstalledApp) -> String? {
         guard let executable = application.executableName else { return nil }
         let script = URL(filePath: application.bundlePath).appending(path: "Contents/MacOS").appending(path: executable)
-        guard let values = try? script.resourceValues(forKeys: [.fileSizeKey]), (values.fileSize ?? .max) <= 4_096,
-              let text = try? String(contentsOf: script, encoding: .utf8), let range = text.range(of: "steam://run/") else { return nil }
+        guard let text = SmallFile.text(atPath: script.path, limit: 4_096), let range = text.range(of: "steam://run/") else { return nil }
         let digits = text[range.upperBound...].prefix { $0.isNumber }
         return digits.isEmpty ? nil : String(digits)
     }

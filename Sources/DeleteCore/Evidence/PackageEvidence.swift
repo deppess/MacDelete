@@ -105,7 +105,7 @@ enum PackageEvidence {
         let bom = plist.deletingPathExtension().appendingPathExtension("bom")
         guard FileManager.default.fileExists(atPath: bom.path) else { return [] }
         var prefix = "/"
-        if let data = try? Data(contentsOf: plist), let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any], let value = info["InstallPrefixPath"] as? String { prefix = value }
+        if let value = SmallFile.plist(atPath: plist.path)?["InstallPrefixPath"] as? String { prefix = value }
         let trimmedPrefix = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let base = trimmedPrefix.isEmpty ? "" : "/" + trimmedPrefix
         guard let result = try? runner.run(executable: lsbom, arguments: ["-s"] + (directoriesOnly ? ["-d"] : []) + [bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024),

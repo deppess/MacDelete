@@ -22,8 +22,7 @@ public struct PackageReceipts: Sendable {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return PackageReceipts() }
         let receipts: [(identifier: String, prefix: String, bom: URL)] = names.filter { $0.hasSuffix(".plist") }.sorted().compactMap { name in
             let plist = directory.appending(path: name)
-            guard let data = try? Data(contentsOf: plist),
-                  let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+            guard let info = SmallFile.plist(atPath: plist.path) else { return nil }
             let identifier = (info["PackageIdentifier"] as? String) ?? String(name.dropLast(".plist".count))
             guard !identifier.lowercased().hasPrefix("com.apple.") else { return nil }
             let bom = directory.appending(path: String(name.dropLast(".plist".count)) + ".bom")

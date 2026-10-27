@@ -45,8 +45,7 @@ enum PlanNotes {
     /// Whether the app has a tile in the user's Dock, which turns into a question mark once it's gone.
     static func isInDock(_ appPath: String, roots: Roots) -> Bool {
         let plist = roots.home.appending(path: "Library/Preferences/com.apple.dock.plist")
-        guard let data = try? Data(contentsOf: plist), data.count <= 8 * 1_048_576,
-              let dock = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+        guard let dock = SmallFile.plist(atPath: plist.path, limit: 8 * 1_048_576),
               let tiles = dock["persistent-apps"] as? [[String: Any]] else { return false }
         let target = URL(filePath: appPath, directoryHint: .isDirectory).standardizedFileURL.path
         return tiles.contains { tile in

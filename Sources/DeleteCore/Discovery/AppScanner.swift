@@ -203,8 +203,7 @@ public struct AppScanner: Sendable {
     private static func isSteamShortcut(_ bundle: URL, executable: String?) -> Bool {
         guard let executable else { return false }
         let script = bundle.appending(path: "Contents/MacOS").appending(path: executable)
-        guard let values = try? script.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 4_096,
-              let contents = try? String(contentsOf: script, encoding: .utf8) else { return false }
+        guard let contents = SmallFile.text(atPath: script.path, limit: 4_096) else { return false }
         return contents.contains("steam://run/")
     }
 

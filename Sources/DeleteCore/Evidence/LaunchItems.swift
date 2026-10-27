@@ -81,9 +81,7 @@ enum LaunchItemScan {
     }
 
     static func read(_ plist: URL) -> Job? {
-        guard let values = try? plist.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 1_048_576,
-              let data = try? Data(contentsOf: plist),
-              let dictionary = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+        guard let dictionary = SmallFile.plist(atPath: plist.path),
               let label = (dictionary["Label"] as? String)?.nonEmpty else { return nil }
         let program = (dictionary["Program"] as? String) ?? (dictionary["ProgramArguments"] as? [Any])?.first as? String
         let associated: [String] = (dictionary["AssociatedBundleIdentifiers"] as? [String]) ?? ((dictionary["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])

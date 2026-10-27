@@ -78,11 +78,7 @@ enum PluginBundles {
         var info = stat()
         guard lstat(bundle.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
         for relative in ["Contents/Info.plist", "Resources/Info.plist", "Info.plist"] {
-            let plist = bundle.appending(path: relative)
-            var plistInfo = stat()
-            guard lstat(plist.path, &plistInfo) == 0, plistInfo.st_mode & S_IFMT == S_IFREG, plistInfo.st_size <= 1_048_576,
-                  let data = try? Data(contentsOf: plist),
-                  let dictionary = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { continue }
+            guard let dictionary = SmallFile.plist(atPath: bundle.appending(path: relative).path) else { continue }
             return (dictionary["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
         }
         return nil

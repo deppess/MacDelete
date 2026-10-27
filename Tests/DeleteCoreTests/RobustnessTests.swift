@@ -203,4 +203,24 @@ final class RobustnessTests: XCTestCase {
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertFalse(FileManager.default.fileExists(atPath: base.path))
     }
+
+    /// Evidence files are read only as small regular files: never through a link, never a huge
+    /// file, never a pipe that would block.
+    func testSmallFilesRefuseLinksLargeFilesAndPipes() throws {
+        let system = try FakeSystem()
+        let plist = system.root.appending(path: "info.plist")
+        try system.writePlist(["CFBundleIdentifier": "com.example.app"], to: plist)
+        XCTAssertEqual(SmallFile.plist(atPath: plist.path)?["CFBundleIdentifier"] as? String, "com.example.app")
+        let link = system.root.appending(path: "link.plist")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: plist)
+        XCTAssertNil(SmallFile.plist(atPath: link.path))
+        let large = system.root.appending(path: "large.json")
+        try system.write(String(repeating: " ", count: 2_000_000) + "{}", to: large)
+        XCTAssertNil(SmallFile.json(atPath: large.path))
+        XCTAssertNotNil(SmallFile.json(atPath: large.path, limit: 4_000_000))
+        let pipe = system.root.appending(path: "pipe")
+        XCTAssertEqual(mkfifo(pipe.path, 0o600), 0)
+        XCTAssertNil(SmallFile.data(atPath: pipe.path), "not a regular file, and opening it doesn't block")
+        XCTAssertNil(SmallFile.data(atPath: system.root.path), "a folder")
+    }
 }
