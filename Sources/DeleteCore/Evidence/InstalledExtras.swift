@@ -16,17 +16,19 @@ enum CommandLinks {
         let bundle = String(cString: real) + "/"
         free(real)
         var seen = Set<String>()
-        var findings: [Finding] = []
+        var links: [String] = []
         for folder in folders(roots: roots) where seen.insert(folder.standardizedFileURL.path).inserted {
-            for name in collector.list(folder) {
-                let link = folder.appending(path: name).path
-                var info = stat()
-                guard lstat(link, &info) == 0, info.st_mode & S_IFMT == S_IFLNK, let target = realpath(link, nil) else { continue }
-                defer { free(target) }
-                if String(cString: target).hasPrefix(bundle) { findings.append(Finding(path: link, tier: .exact, reason: "command-line link into the app")) }
-            }
+            links += collector.list(folder).map { folder.appending(path: $0).path }
         }
-        return findings
+        // Resolved in parallel: Homebrew's bin alone holds hundreds of links.
+        let matches = UnsafeResults<Bool>(count: links.count)
+        DispatchQueue.concurrentPerform(iterations: links.count) { index in
+            var info = stat()
+            guard lstat(links[index], &info) == 0, info.st_mode & S_IFMT == S_IFLNK, let target = realpath(links[index], nil) else { matches[index] = false; return }
+            matches[index] = String(cString: target).hasPrefix(bundle)
+            free(target)
+        }
+        return zip(links, matches.values).filter(\.1).map { Finding(path: $0.0, tier: .exact, reason: "command-line link into the app") }
     }
 }
 

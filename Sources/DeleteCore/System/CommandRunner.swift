@@ -45,13 +45,16 @@ public struct CommandRunner: Sendable {
         let stdoutBox = DataBox(limit: outputLimit)
         let stderrBox = DataBox(limit: outputLimit)
         let stopper = ProcessStopper()
+        // The pipes are read, and the process waited for, on threads of their own: these block,
+        // and blocking GCD's shared pool from inside `concurrentPerform` (a plan runs `lsbom` for
+        // every receipt at once) left them no thread to run on until the 30 s timeout.
         outputGroup.enter()
-        DispatchQueue.global().async {
+        Self.detach {
             Self.read(pipe: stdout.fileHandleForReading, into: stdoutBox, stopper: stopper)
             outputGroup.leave()
         }
         outputGroup.enter()
-        DispatchQueue.global().async {
+        Self.detach {
             Self.read(pipe: stderr.fileHandleForReading, into: stderrBox, stopper: stopper)
             outputGroup.leave()
         }
@@ -66,7 +69,7 @@ public struct CommandRunner: Sendable {
         stopper.setProcessGroup(processIdentifier)
         Self.closeWriters(stdout, stderr)
         let status = StatusBox()
-        DispatchQueue.global().async {
+        Self.detach {
             var value: Int32 = 0
             var result: pid_t
             repeat {
@@ -106,6 +109,12 @@ public struct CommandRunner: Sendable {
         guard !stdoutBox.exceededLimit, !stderrBox.exceededLimit else { throw CommandRunnerError.outputTooLarge(executable) }
         if let error = status.waitError { throw NSError(domain: NSPOSIXErrorDomain, code: Int(error)) }
         return CommandResult(status: Self.terminationStatus(status.value), stdout: output, stderr: errors)
+    }
+
+    private static func detach(_ work: @escaping @Sendable () -> Void) {
+        let thread = Thread(block: work)
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 
     private static func read(pipe: FileHandle, into box: DataBox, stopper: ProcessStopper) {

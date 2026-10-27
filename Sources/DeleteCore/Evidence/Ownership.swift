@@ -19,16 +19,37 @@ struct Ownership {
     /// Lowercased identifier → the apps (paths) that carry it.
     private var claims: [String: Set<String>] = [:]
     private let targetPath: String
+    /// The app's identifiers, lowercased, as bytes.
+    private let targetPrefixes: [[UInt8]]
 
     /// `otherEmbedded` are identifiers embedded in other installed apps (helpers several apps of a
     /// suite each carry, like Office's `com.microsoft.errorreporting`), with the app carrying them.
     init(targetPath: String, targetIdentifiers: [String], otherApplications: [InstalledApp], otherEmbedded: [(identifier: String, path: String)] = []) {
         self.targetPath = targetPath
+        targetPrefixes = targetIdentifiers.map { Array($0.lowercased().utf8) }
         for identifier in targetIdentifiers { claims[identifier.lowercased(), default: []].insert(targetPath) }
         for application in otherApplications where application.bundlePath != targetPath {
             if let identifier = application.bundleIdentifier { claims[identifier.lowercased(), default: []].insert(application.path) }
         }
         for (identifier, path) in otherEmbedded where path != targetPath { claims[identifier.lowercased(), default: []].insert(path) }
+    }
+
+    /// Whether an item with this name can belong to the app at all: every identifier that
+    /// could name it for the app starts it. A byte comparison, ignoring ASCII case, that rules
+    /// out nearly every entry of a folder (the per-user temp folder holds ~12,000) before
+    /// `owner(ofItemNamed:)` builds any string.
+    func mightBelongToTarget(_ name: String) -> Bool {
+        var name = name
+        return name.withUTF8 { bytes in
+            targetPrefixes.contains { prefix in
+                guard bytes.count >= prefix.count else { return false }
+                for index in prefix.indices {
+                    let byte = bytes[index]
+                    if (byte >= 0x41 && byte <= 0x5A ? byte | 0x20 : byte) != prefix[index] { return false }
+                }
+                return true
+            }
+        }
     }
 
     /// The owner of an item with this file name, or nil when no installed identifier names it.

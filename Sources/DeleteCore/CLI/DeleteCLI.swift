@@ -65,6 +65,9 @@ public enum DeleteCLI {
             timing?.mark("render")
             return inventory.complete ? EXIT_SUCCESS : EXIT_FAILURE
         case let .remove(query):
+            // Launch Services is connected to while the apps are scanned.
+            let launchServices = Concurrent { RunningApps.prepare() }
+            defer { launchServices.value }
             let inventory = Inventory.load(roots: roots, sizes: false, timing: timing)
             // Only a plan that's shown and answered may come from a name prefix.
             let allowPrefix = invocation.dryRun || !invocation.assumeYes
@@ -117,10 +120,9 @@ public enum DeleteCLI {
 
         let finder = EvidenceFinder(roots: roots)
         func makePlans() throws(Refusal) -> [RemovalPlan] {
-            // The companions' plans are made while the app's is, one after another: each plan
-            // waits on lookups of its own, and many at once starve the shared threads.
-            let companionPlans = Concurrent { () -> [RemovalPlan] in
-                companions.compactMap { companion in
+            // The companions' plans are made while the app's is.
+            let companionPlans = companions.map { companion in
+                Concurrent { () -> RemovalPlan? in
                     var other = companion.application
                     other.source = Inventory.source(of: other, casks: inventory.casks, receipts: inventory.receipts)
                     return try? finder.plan(for: other, inventory: inventory, group: group)
@@ -134,7 +136,7 @@ public enum DeleteCLI {
             if !found.sameDeveloper.isEmpty {
                 main.notes.append("Also by the same developer, not included: \(found.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
             }
-            let plans = [main] + companionPlans.value
+            let plans = [main] + companionPlans.compactMap(\.value)
             // A companion whose every item another plan already deletes (a helper inside a folder
             // the app's package installed) has nothing left to show.
             let distinct = RemovalPlan.deduplicated(plans).enumerated().filter { $0.offset == 0 || !$0.element.findings.isEmpty || !$0.element.packages.isEmpty || !$0.element.launchItems.isEmpty }.map(\.element)

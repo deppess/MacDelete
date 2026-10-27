@@ -86,7 +86,8 @@ public struct EvidenceFinder: Sendable {
         if let clones = roots.codeSigningClones { identifierFolders.append((clones, "code-signing copy")) }
 
         for (folder, reason) in identifierFolders {
-            for name in collector.list(folder) {
+            // Most entries can't be the app's at all; they're ruled out before the ownership rules.
+            for name in collector.list(folder) where ownership.mightBelongToTarget(name) {
                 switch ownership.owner(ofItemNamed: name) {
                 case .target?:
                     let via = Self.matchedIdentifier(name, identifiers: identifiers)

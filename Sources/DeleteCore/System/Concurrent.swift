@@ -1,16 +1,21 @@
 import Foundation
 
-/// Starts `work` on a global queue immediately; `value` blocks until it has finished.
+/// Starts `work` on a thread of its own immediately; `value` blocks until it has finished.
+///
+/// Not a GCD queue: work here often waits on more `Concurrent` work (a plan on its lookups), and
+/// waiting pool threads starved GCD's small pool (nine companion plans at once took 63 s).
 final class Concurrent<Value: Sendable>: @unchecked Sendable {
     private let group = DispatchGroup()
     private var result: Value?
 
     init(_ work: @escaping @Sendable () -> Value) {
         group.enter()
-        DispatchQueue.global().async {
+        let thread = Thread {
             self.result = work()
             self.group.leave()
         }
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 
     var value: Value {
