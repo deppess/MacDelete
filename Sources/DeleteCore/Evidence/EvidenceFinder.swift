@@ -218,6 +218,10 @@ public struct EvidenceFinder: Sendable {
         notes += PlanNotes.largeData(findings, roots: roots)
         PlanNotes.cloudData(identifiers: identifiers, names: [application.name] + application.alternateNames, roots: roots).forEach { collector.skip($0.path, $0.reason) }
         PlanNotes.kernelExtensions(ownership: ownership, roots: roots).forEach { collector.skip($0.path, $0.reason) }
+        let audioPlugins = findings.filter { $0.reason == "audio plug-in" }.count
+        if audioPlugins > 0 {
+            notes.append("It installed \(audioPlugins) audio plug-in\(audioPlugins == 1 ? "" : "s") that other music apps load too: deleting it removes \(audioPlugins == 1 ? "it" : "them") from those apps as well.")
+        }
         if findings.contains(where: { $0.reason == "audio driver" }) {
             notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
         }

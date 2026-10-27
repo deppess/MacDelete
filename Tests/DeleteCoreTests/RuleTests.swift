@@ -296,6 +296,8 @@ final class RuleTests: XCTestCase {
         XCTAssertFalse(plan.selected(includeNameMatches: true).contains { $0.path.contains("Mobile Documents") || $0.path.contains("CloudStorage") || $0.path.hasSuffix(".kext") })
         XCTAssertTrue(plan.notes.contains { $0.contains("in your Dock") })
         XCTAssertTrue(plan.notes.contains { $0.contains("coreaudiod") })
+        try system.makeApp("Example.vst3", in: system.library.appending(path: "Audio/Plug-Ins/VST3"), metadata: ["CFBundleIdentifier": "com.example.app.vst3"])
+        XCTAssertTrue(try system.plan("Example").notes.contains { $0.contains("1 audio plug-in that other music apps load too") })
     }
 
     /// Office-style suites: a helper every app embeds stays while any of them does; the shared
