@@ -124,6 +124,51 @@ final class FinderTests: XCTestCase {
         XCTAssertNil(byPath[agents.appending(path: "d.plist").path])
     }
 
+    /// A job's log files are the app's, unless they're not regular files or another job writes them too.
+    func testLaunchItemLogsAreTheAppsUnlessShared() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let own = try system.touch("Library/Application Support/Example Helper.log")
+        let shared = try system.touch("Library/Logs/shared.log")
+        try system.writePlist(["Label": "com.example.app.daemon", "Program": "/usr/bin/true", "StandardOutPath": own.path, "StandardErrorPath": "/dev/null"],
+                              to: system.library.appending(path: "LaunchDaemons/com.example.app.daemon.plist"))
+        try system.writePlist(["Label": "com.example.app.agent", "Program": "/usr/bin/true", "StandardErrorPath": shared.path], to: system.library.appending(path: "LaunchAgents/com.example.app.agent.plist"))
+        try system.writePlist(["Label": "com.other.agent", "Program": "/usr/bin/true", "StandardOutPath": shared.path], to: system.library.appending(path: "LaunchAgents/com.other.agent.plist"))
+
+        let paths = try system.plan("Example").findings.filter { $0.tier == .exact }.map(\.path)
+        XCTAssertTrue(paths.contains(own.path))
+        XCTAssertFalse(paths.contains(shared.path))
+        XCTAssertFalse(paths.contains("/dev/null"))
+    }
+
+    /// A package installed into the bundle itself is found by the receipts, not `pkgutil
+    /// --file-info`; one that installed only items the plan deletes is forgotten too, and one
+    /// that installed anything else isn't.
+    func testReceiptsInstalledIntoTheBundleOrCoveredByThePlanAreForgotten() throws {
+        let system = try FakeSystem()
+        let bundle = try makeExample(system)
+        let daemons = system.library.appending(path: "LaunchDaemons")
+        try system.writePlist(["Label": "com.example.app.daemon", "Program": bundle.path + "/Contents/MacOS/Example"], to: daemons.appending(path: "com.example.app.daemon.plist"))
+        try system.touch("Library/LaunchDaemons/net.vendor.unrelated.plist")
+        for (package, prefix) in [("com.example.pkg.app", bundle.path), ("com.example.pkg.daemon", daemons.path), ("com.example.pkg.extra", daemons.path)] {
+            try system.writePlist(["PackageIdentifier": package, "InstallPrefixPath": prefix], to: system.receipts.appending(path: "\(package).plist"))
+            try system.write("", to: system.receipts.appending(path: "\(package).bom"))
+        }
+        try system.write("""
+        #!/bin/sh
+        case "$*" in
+        *pkg.app*) printf '.\\n./Contents\\n' ;;
+        *-d*) printf '.\\n' ;;
+        *pkg.daemon*) printf '.\\n./com.example.app.daemon.plist\\n' ;;
+        *pkg.extra*) printf '.\\n./com.example.app.daemon.plist\\n./net.vendor.unrelated.plist\\n' ;;
+        esac
+        """, to: system.tools.appending(path: "lsbom"), executable: true)
+
+        let plan = try system.plan("Example")
+        XCTAssertEqual(plan.application.source, .installerPackage(identifiers: ["com.example.pkg.app"]))
+        XCTAssertEqual(plan.packages.sorted(), ["com.example.pkg.app", "com.example.pkg.daemon"])
+    }
+
     func testNameEvidenceSkipsGenericAndSharedNames() throws {
         let system = try FakeSystem()
         try makeExample(system)

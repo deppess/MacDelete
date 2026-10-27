@@ -48,7 +48,8 @@ public struct EvidenceFinder: Sendable {
         let runner = self.runner
         let roots = self.roots
         let otherPaths = Set(others.flatMap { [$0.path, $0.bundlePath] })
-        let packagesTask = Concurrent { PackageEvidence.scan(application: application, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
+        let knownPackages = inventory.receipts.packages(for: application.bundlePath)
+        let packagesTask = Concurrent { PackageEvidence.scan(application: application, known: knownPackages, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
         let groupsTask = Concurrent { Self.applicationGroups(bundle: bundle, embedded: embedded, others: others) }
         let catalogTask: Concurrent<(token: String, paths: [String])?>? = {
             if case .homebrew(_, true) = application.source { return nil }
@@ -129,10 +130,14 @@ public struct EvidenceFinder: Sendable {
         collector.unreadable += launch.unreadable
 
         // Command-line links into the app, and plug-ins it installed into the Library.
-        for finding in CommandLinks.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
+        let links = CommandLinks.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector)
+        links.forEach { collector.add($0) }
         let plugins = PluginBundles.scan(application: application, ownership: ownership, roots: roots, collector: &collector)
         plugins.findings.forEach { collector.add($0) }
         plugins.skipped.forEach { collector.skip($0.path, $0.reason) }
+        // Packages that installed any of these (only the app's launch daemon, say), looked up
+        // while the app's own packages are.
+        let installedBy = Concurrent { PackageEvidence.packagesInstalling(items: launch.findings + links + plugins.findings, application: application, roots: roots, runner: runner) }
 
         // Browser native-messaging manifests that run a program inside the app.
         for finding in NativeMessaging.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
@@ -178,6 +183,11 @@ public struct EvidenceFinder: Sendable {
         // A folder removed only once empty is never deleted whole, not even as a name match.
         let lowerEmpty = Set(emptyFolders.map { $0.lowercased() })
         findings.removeAll { lowerEmpty.contains($0.path.lowercased()) }
+        // Other receipts the plan empties (items found after the early lookup are looked up now).
+        let early = installedBy.value
+        let late = PackageEvidence.packagesInstalling(items: findings.filter { !early.looked.contains($0.path.lowercased()) }, application: application, roots: roots, runner: runner)
+        let coveredPackages = PackageEvidence.coveredPackages(early.packages + late.packages, findings: findings, excluding: packages.packages + packages.kept, roots: roots, runner: runner)
+        timing?.mark("  covered packages")
         Self.measure(&findings, knownBundle: application.size.map { (application.bundlePath, $0) })
         timing?.mark("  sizes")
         let unreadable = Array(Set(collector.unreadable + findings.filter { !$0.sizeComplete }.map(\.path))).sorted()
@@ -193,7 +203,7 @@ public struct EvidenceFinder: Sendable {
 
         // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
         let skipped = collector.skipped.filter { !lowerEmpty.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: packages.packages,
+        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: packages.packages + coveredPackages,
                                unreadable: unreadable, notes: notes, running: running, homebrewCask: zap.cask)
         plan.activeSystemExtensions = activeExtensions
         plan.emptyFolders = emptyFolders

@@ -11,13 +11,18 @@ enum PackageEvidence {
     struct Result {
         /// Receipts to forget: every item they installed is being deleted.
         var packages: [String] = []
+        /// Receipts kept because the package also installed another app.
+        var kept: [String] = []
         var findings: [Finding] = []
         var skipped: [Skipped] = []
     }
 
-    static func scan(application: InstalledApp, roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
+    /// `known` are the packages the inventory's receipt map gives the bundle: `pkgutil
+    /// --file-info` misses a package whose install location is the bundle itself.
+    static func scan(application: InstalledApp, known: [String] = [], roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
         let (pkgutil, lsbom) = (roots.tools.pkgutil, roots.tools.lsbom)
-        let packages = packagesInstalling(application.bundlePath, runner: runner, pkgutil: pkgutil)
+        var packages = packagesInstalling(application.bundlePath, runner: runner, pkgutil: pkgutil)
+        for package in known where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) { packages.append(package) }
         guard !packages.isEmpty else { return Result() }
         var result = Result()
 
@@ -46,6 +51,7 @@ enum PackageEvidence {
             if let otherApp {
                 let name = URL(filePath: otherApp).lastPathComponent
                 result.skipped.append(Skipped(path: roots.receipts.appending(path: "\(package).plist").path, reason: "package \(package) also installed \(name), so its files stay while that app is installed"))
+                result.kept.append(package)
                 continue
             }
             for item in items where !Protection.isProtected(item, roots: roots) {
@@ -85,6 +91,52 @@ enum PackageEvidence {
             }
         }
         return owned.sorted()
+    }
+
+    /// Packages that installed any of these items. Only items outside the home folder are
+    /// looked up (packages don't install into it), and not the app, already looked up.
+    static func packagesInstalling(items findings: [Finding], application: InstalledApp, roots: Roots, runner: CommandRunner) -> (looked: Set<String>, packages: [String]) {
+        let bundles = Set([application.path, application.bundlePath].map { $0.lowercased() })
+        let home = roots.home.standardizedFileURL.path.lowercased() + "/"
+        let temporary = [roots.userCache, roots.userTemp, roots.codeSigningClones].compactMap { $0?.standardizedFileURL.path.lowercased() }.map { $0 + "/" }
+        let candidates = findings.filter { finding in
+            let lowered = finding.path.lowercased()
+            return finding.tier == .exact && !bundles.contains(lowered) && !lowered.hasPrefix(home) && !temporary.contains { lowered.hasPrefix($0) } && !(finding.reason?.hasPrefix("installed by package") ?? false)
+        }.map(\.path)
+        guard !candidates.isEmpty else { return ([], []) }
+        let lookups = UnsafeResults<[String]>(count: candidates.count)
+        DispatchQueue.concurrentPerform(iterations: candidates.count) { index in
+            lookups[index] = packagesInstalling(candidates[index], runner: runner, pkgutil: roots.tools.pkgutil)
+        }
+        // `pkgutil --file-info` only knows packages installed at "/"; one installed into a folder
+        // (`Library/LaunchDaemons`) is found by its install location holding a candidate.
+        let lowerCandidates = candidates.map { $0.lowercased() }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: roots.receipts.path)) ?? []).filter { $0.hasSuffix(".plist") && !$0.lowercased().hasPrefix("com.apple.") }
+        let byLocation: [String] = names.compactMap { name in
+            guard let info = SmallFile.plist(atPath: roots.receipts.appending(path: name).path),
+                  let prefix = (info["InstallPrefixPath"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "/")), !prefix.isEmpty else { return nil }
+            let location = "/" + prefix.lowercased()
+            guard lowerCandidates.contains(where: { $0 == location || $0.hasPrefix(location + "/") }) else { return nil }
+            return (info["PackageIdentifier"] as? String) ?? String(name.dropLast(".plist".count))
+        }
+        return (Set(lowerCandidates), EvidenceFinder.distinct(lookups.values.flatMap { $0 } + byLocation))
+    }
+
+    /// Of these packages, the ones whose every item is being deleted (one that installed only the
+    /// app's launch daemon): their receipts are forgotten too.
+    static func coveredPackages(_ packages: [String], findings: [Finding], excluding: [String], roots: Roots, runner: CommandRunner) -> [String] {
+        let excluded = Set(excluding.map { $0.lowercased() })
+        let deleted = findings.filter { $0.tier == .exact }.map { $0.path.lowercased() }
+        func isDeleted(_ path: String) -> Bool {
+            let lowered = path.lowercased()
+            return deleted.contains { lowered == $0 || lowered.hasPrefix($0 + "/") }
+        }
+        return EvidenceFinder.distinct(packages).filter { package in
+            guard !excluded.contains(package.lowercased()), !package.lowercased().hasPrefix("com.apple.") else { return false }
+            let paths = listing(receipt: roots.receipts.appending(path: "\(package).plist"), directoriesOnly: false, runner: runner, lsbom: roots.tools.lsbom)
+            let items = ownedItems(paths, sharedFolders: [], root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
+            return !items.isEmpty && items.allSatisfy(isDeleted)
+        }
     }
 
     /// `pkgutil --file-info` names every package that installed the bundle, Apple's App Store

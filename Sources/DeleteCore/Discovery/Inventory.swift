@@ -12,7 +12,7 @@ public struct Inventory: Sendable {
     /// app's source. `sizes` fills in any size Spotlight didn't have by walking those bundles.
     public static func load(roots: Roots, runner: CommandRunner = CommandRunner(), sizes: Bool = true, timing: Timing? = nil) -> Inventory {
         let casksTask = Concurrent { Caskroom.installedCasks(prefixes: roots.homebrewPrefixes, home: roots.home) }
-        let receiptsTask = Concurrent { PackageReceipts.read(directory: roots.receipts, runner: runner) }
+        let receiptsTask = Concurrent { PackageReceipts.read(directory: roots.receipts, runner: runner, lsbom: roots.tools.lsbom) }
         // Game folders that are their own bundle (Stardew Valley) never have a Spotlight size and
         // take the longest to walk (11,000 files), so they're walked while the scan runs.
         let folderBundleSizes: Concurrent<[String: Int64]>? = sizes ? Concurrent { folderBundleSizes(roots: roots) } : nil

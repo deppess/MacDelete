@@ -2,7 +2,8 @@ import Foundation
 
 /// The app's launchd jobs: plists in the LaunchAgents and LaunchDaemons folders whose label is
 /// one of the app's identifiers (or a sub-identifier), whose `AssociatedBundleIdentifiers` names
-/// the app, or whose program lives inside the app's bundle.
+/// the app, or whose program lives inside the app's bundle. The log files such a job writes
+/// (`StandardOutPath`, `StandardErrorPath`) are the app's too, unless another job writes them.
 enum LaunchItemScan {
     struct Result {
         var items: [LaunchItem] = []
@@ -14,6 +15,7 @@ enum LaunchItemScan {
         var label: String
         var program: String?
         var associated: [String]
+        var logs: [String] = []
     }
 
     static func scan(roots: Roots, bundlePath: String, identifiers: [String], helperLabels: [String], ownership: Ownership) -> Result {
@@ -26,6 +28,8 @@ enum LaunchItemScan {
         let lowerIdentifiers = Set(identifiers.map { $0.lowercased() })
         let lowerHelpers = Set(helperLabels.map { $0.lowercased() })
         let bundlePrefix = bundlePath.lowercased() + "/"
+        var ownLogs: [(path: String, label: String)] = []
+        var otherLogs = Set<String>()
         for (folder, domain, kind) in folders {
             let names: [String]
             do { names = try FileManager.default.contentsOfDirectory(atPath: folder.path) } catch {
@@ -40,11 +44,22 @@ enum LaunchItemScan {
                 let byLabel = lowerHelpers.contains(label) || ownership.owner(ofItemNamed: job.label) == .target
                 let byAssociation = job.associated.contains { lowerIdentifiers.contains($0.lowercased()) }
                 let byProgram = program.map { $0.lowercased().hasPrefix(bundlePrefix) } ?? false
-                guard byLabel || byAssociation || byProgram else { continue }
+                guard byLabel || byAssociation || byProgram else {
+                    otherLogs.formUnion(job.logs.map { $0.lowercased() })
+                    continue
+                }
+                ownLogs += job.logs.map { ($0, job.label) }
                 result.items.append(LaunchItem(label: job.label, plist: plist.path, domain: domain))
                 result.findings.append(Finding(path: plist.path, tier: .exact, reason: kind))
                 if let program, !byProgram { result.findings += programFindings(program, label: job.label, roots: roots) }
             }
+        }
+        // Only regular files: a job may log to /dev/null or a terminal.
+        var seen = Set<String>()
+        for (log, label) in ownLogs where !otherLogs.contains(log.lowercased()) && !log.lowercased().hasPrefix(bundlePrefix) && seen.insert(log.lowercased()).inserted {
+            var info = stat()
+            guard lstat(log, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { continue }
+            result.findings.append(Finding(path: log, tier: .exact, reason: "log of \(label)"))
         }
         return result
     }
@@ -86,6 +101,7 @@ enum LaunchItemScan {
         let program = (dictionary["Program"] as? String) ?? (dictionary["ProgramArguments"] as? [Any])?.first as? String
         let associated: [String] = (dictionary["AssociatedBundleIdentifiers"] as? [String]) ?? ((dictionary["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])
         // Only absolute program paths are evidence; anything else is resolved through PATH.
-        return Job(label: label, program: program.flatMap { $0.hasPrefix("/") ? $0 : nil }, associated: associated)
+        let logs = ["StandardOutPath", "StandardErrorPath"].compactMap { dictionary[$0] as? String }.filter { $0.hasPrefix("/") }.map { URL(filePath: $0).standardizedFileURL.path }
+        return Job(label: label, program: program.flatMap { $0.hasPrefix("/") ? $0 : nil }, associated: associated, logs: logs)
     }
 }
