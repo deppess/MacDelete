@@ -9,10 +9,22 @@ public struct PackageReceipts: Sendable {
     public var packagesByApplication: [String: [String]]
     /// Every absolute path each package lists, by package identifier.
     public var listings: [String: [String]]
+    /// The same paths lowercased, for lookups (made once, while the apps are scanned).
+    public var lowercasedListings: [String: Set<String>]
 
     public init(packagesByApplication: [String: [String]] = [:], listings: [String: [String]] = [:]) {
         self.packagesByApplication = packagesByApplication
         self.listings = listings
+        lowercasedListings = listings.mapValues { Set($0.map { $0.lowercased() }) }
+    }
+
+    private init(packagesByApplication: [String: [String]], listings: [String: [String]], lowercasedListings: [String: Set<String>]) {
+        (self.packagesByApplication, self.listings, self.lowercasedListings) = (packagesByApplication, listings, lowercasedListings)
+    }
+
+    /// Whether any package but these lists the (lowercased) path.
+    public func isListed(_ lowercasedPath: String, byOtherThan packages: Set<String>) -> Bool {
+        lowercasedListings.contains { !packages.contains($0.key.lowercased()) && $0.value.contains(lowercasedPath) }
     }
 
     public func packages(for path: String) -> [String] {
@@ -32,20 +44,22 @@ public struct PackageReceipts: Sendable {
             guard FileManager.default.fileExists(atPath: bom.path) else { return nil }
             return (identifier, (info["InstallPrefixPath"] as? String) ?? "/", bom)
         }
-        let results = UnsafeResults<[String]>(count: receipts.count)
+        let results = UnsafeResults<([String], Set<String>)>(count: receipts.count)
         DispatchQueue.concurrentPerform(iterations: receipts.count) { index in
             let receipt = receipts[index]
-            results[index] = listing(bom: receipt.bom, installPrefix: receipt.prefix, runner: runner, lsbom: lsbom)
+            let paths = listing(bom: receipt.bom, installPrefix: receipt.prefix, runner: runner, lsbom: lsbom)
+            results[index] = (paths, Set(paths.map { $0.lowercased() }))
         }
         var map: [String: [String]] = [:]
         var listings: [String: [String]] = [:]
-        for (receipt, paths) in zip(receipts, results.values) {
-            listings[receipt.identifier] = paths
+        var lowercased: [String: Set<String>] = [:]
+        for (receipt, (paths, lowered)) in zip(receipts, results.values) {
+            (listings[receipt.identifier], lowercased[receipt.identifier]) = (paths, lowered)
             for path in applicationPaths(paths) where !(map[path.lowercased()]?.contains(receipt.identifier) ?? false) {
                 map[path.lowercased(), default: []].append(receipt.identifier)
             }
         }
-        return PackageReceipts(packagesByApplication: map, listings: listings)
+        return PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased)
     }
 
     /// The absolute paths a BOM lists, or none when it can't be read.

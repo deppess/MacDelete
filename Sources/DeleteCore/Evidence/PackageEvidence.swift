@@ -31,12 +31,9 @@ enum PackageEvidence {
         guard !packages.isEmpty else { return Result() }
         var result = Result()
 
-        // Paths every other package lists, to find the folders this app's packages share.
+        // A folder another package lists too is shared (a vendor folder several products use).
         let own = Set(packages.map { $0.lowercased() })
-        var sharedFolders = Set<String>()
-        for (package, paths) in receipts.listings where !own.contains(package.lowercased()) {
-            for path in paths { sharedFolders.insert(path.lowercased()) }
-        }
+        let isShared = { (path: String) in receipts.isListed(path, byOtherThan: own) }
 
         let bundle = application.bundlePath.lowercased() + "/"
         for package in packages {
@@ -44,7 +41,7 @@ enum PackageEvidence {
             // receipt lists 166,000 of them). Apple's receipts aren't in the index.
             let paths = receipts.listings[package].map { $0.filter { !$0.lowercased().hasPrefix(bundle) } }
                 ?? listing(receipt: roots.receipts.appending(path: "\(package).plist"), runner: runner, lsbom: roots.tools.lsbom, excludingInside: application.bundlePath)
-            let items = ownedItems(paths, sharedFolders: sharedFolders, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
+            let items = ownedItems(paths, isShared: isShared, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
             // A package that also installed another app still on the Mac (a suite like DaVinci
             // Resolve's) owns its files together with that app: none of them, and not its
             // receipt, belong to this app alone.
@@ -66,8 +63,9 @@ enum PackageEvidence {
         return result
     }
 
-    /// Topmost entries below a standard folder, descending into any folder another package shares.
-    static func ownedItems(_ paths: [String], sharedFolders: Set<String>, root: String = "/") -> [String] {
+    /// Topmost entries below a standard folder, descending into any folder another package shares
+    /// (`isShared` gets the lowercased path).
+    static func ownedItems(_ paths: [String], isShared: (String) -> Bool, root: String = "/") -> [String] {
         // Standard folders are compared relative to the system root (a fake one in tests).
         let rootPrefix = root == "/" ? "" : root.lowercased()
         func isStandard(_ path: String) -> Bool {
@@ -88,7 +86,7 @@ enum PackageEvidence {
         var queue = unique.filter { isStandard(parent($0)) && !isStandard($0) }.sorted()
         while let path = queue.first {
             queue.removeFirst()
-            if sharedFolders.contains(path.lowercased()) {
+            if isShared(path.lowercased()) {
                 queue += (children[path.lowercased()] ?? []).sorted()
             } else {
                 owned.append(path)
@@ -112,8 +110,9 @@ enum PackageEvidence {
         }
         let excluded = Set(excluding.map { $0.lowercased() })
         return receipts.listings.keys.sorted().filter { package in
-            guard !excluded.contains(package.lowercased()), let paths = receipts.listings[package], paths.contains(where: { candidates.contains($0.lowercased()) }) else { return false }
-            let items = ownedItems(paths, sharedFolders: [], root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
+            guard !excluded.contains(package.lowercased()), let paths = receipts.listings[package],
+                  receipts.lowercasedListings[package]?.isDisjoint(with: candidates) == false else { return false }
+            let items = ownedItems(paths, isShared: { _ in false }, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
             return !items.isEmpty && items.allSatisfy(isDeleted)
         }
     }

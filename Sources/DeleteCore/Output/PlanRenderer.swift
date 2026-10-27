@@ -79,11 +79,8 @@ public enum PlanRenderer {
         return parts.joined(separator: "\n\n")
     }
 
-    /// The confirmation question, or nil when there's nothing to delete.
-    public static func question(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool) -> String? {
-        question([plan], includeNameMatches: includeNameMatches, isRoot: isRoot)
-    }
-
+    /// The confirmation question for an app and its companions, or nil when there's nothing to
+    /// delete.
     public static func question(_ plans: [RemovalPlan], includeNameMatches: Bool, isRoot: Bool) -> String? {
         let deleting = plans.flatMap { $0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting }
         guard !deleting.isEmpty else { return nil }

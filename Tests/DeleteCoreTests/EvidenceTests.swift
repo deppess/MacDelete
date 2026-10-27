@@ -256,9 +256,9 @@ final class PackageTests: XCTestCase {
                      "/Library", "/Library/Application Support", "/Library/Application Support/Vendor", "/Library/Application Support/Vendor/Product",
                      "/Library/Application Support/Vendor/Product/data", "/Library/LaunchDaemons", "/Library/LaunchDaemons/com.vendor.daemon.plist",
                      "/usr/local/bin/tool"]
-        let owned = PackageEvidence.ownedItems(paths, sharedFolders: ["/applications/suite", "/library/application support/vendor"])
+        let owned = PackageEvidence.ownedItems(paths, isShared: ["/applications/suite", "/library/application support/vendor"].contains)
         XCTAssertEqual(owned, ["/Applications/Suite/Manual.pdf", "/Applications/Suite/Tool.app", "/Library/Application Support/Vendor/Product", "/Library/LaunchDaemons/com.vendor.daemon.plist", "/usr/local/bin/tool"])
-        XCTAssertEqual(PackageEvidence.ownedItems(["/fake/Library", "/fake/Library/Fonts", "/fake/Library/Fonts/Font.otf"], sharedFolders: [], root: "/fake"), ["/fake/Library/Fonts/Font.otf"])
+        XCTAssertEqual(PackageEvidence.ownedItems(["/fake/Library", "/fake/Library/Fonts", "/fake/Library/Fonts/Font.otf"], isShared: { _ in false }, root: "/fake"), ["/fake/Library/Fonts/Font.otf"])
     }
 
     func testReceiptIsKeptWhenThePackageAlsoInstalledAnotherApp() throws {
@@ -582,7 +582,7 @@ final class PlanRendererTests: XCTestCase {
 
           Also: stops 1 launch item first; resets its privacy permissions.
         """)
-        XCTAssertEqual(PlanRenderer.question(plan, includeNameMatches: false, isRoot: false), "Permanently delete 2 items (310 MB)? [y/N] ")
-        XCTAssertEqual(PlanRenderer.question(plan, includeNameMatches: true, isRoot: true), "Permanently delete 4 items (313 MB)? [y/N] ")
+        XCTAssertEqual(PlanRenderer.question([plan], includeNameMatches: false, isRoot: false), "Permanently delete 2 items (310 MB)? [y/N] ")
+        XCTAssertEqual(PlanRenderer.question([plan], includeNameMatches: true, isRoot: true), "Permanently delete 4 items (313 MB)? [y/N] ")
     }
 }

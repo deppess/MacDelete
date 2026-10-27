@@ -38,7 +38,7 @@ public enum Companions {
     }
 
     /// `team` reads a bundle's developer team (tests stand in for real signatures).
-    public static func find(for application: InstalledApp, inventory: Inventory, roots: Roots, runner: CommandRunner = CommandRunner(),
+    public static func find(for application: InstalledApp, inventory: Inventory, roots: Roots,
                             team teamOf: @Sendable (String) -> String? = { SigningInfo.read(URL(filePath: $0, directoryHint: .isDirectory))?.teamIdentifier }) -> Result {
         guard application.classification == .user, application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") != true else { return Result() }
         var result = Result()

@@ -221,10 +221,10 @@ final class ExecutorTests: XCTestCase {
         split = plan.split(includeNameMatches: false, isRoot: false)
         XCTAssertTrue(split.deleting.isEmpty)
         XCTAssertEqual(split.needingRoot.count, plan.selected(includeNameMatches: false).count)
-        XCTAssertNil(PlanRenderer.question(plan, includeNameMatches: false, isRoot: false), "nothing to ask: the run stops")
+        XCTAssertNil(PlanRenderer.question([plan], includeNameMatches: false, isRoot: false), "nothing to ask: the run stops")
         XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("Example itself needs administrator rights"))
         XCTAssertEqual(plan.split(includeNameMatches: false, isRoot: true).deleting.count, plan.selected(includeNameMatches: false).count)
-        XCTAssertNotNil(PlanRenderer.question(plan, includeNameMatches: false, isRoot: true))
+        XCTAssertNotNil(PlanRenderer.question([plan], includeNameMatches: false, isRoot: true))
     }
 
     /// tccutil looks the identifier up through Launch Services, so it runs while the app is there.
