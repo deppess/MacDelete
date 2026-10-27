@@ -26,9 +26,8 @@ func isIOSWrapper(_ url: URL) -> Bool {
 }
 
 public struct ScanResult: Sendable {
+    /// Each with the allocated size Spotlight reported, when it had one.
     public var applications: [InstalledApp]
-    /// Allocated sizes Spotlight reported, by path.
-    public var spotlightSizes: [String: Int64]
     public var warnings: [String]
     /// False when a required root or a bundle couldn't be read.
     public var complete: Bool
@@ -148,7 +147,7 @@ public struct AppScanner: Sendable {
                 complete = false
             }
         }
-        return ScanResult(applications: applications.sorted { $0.path < $1.path }, spotlightSizes: spotlightSizes, warnings: warnings, complete: complete)
+        return ScanResult(applications: applications.sorted { $0.path < $1.path }, warnings: warnings, complete: complete)
     }
 
     /// Reads one bundle. Also used for a path given on the command line that the scan didn't find.
