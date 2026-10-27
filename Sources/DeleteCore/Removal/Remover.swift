@@ -136,7 +136,8 @@ public enum Remover {
         if neverInside.contains(where: { lowered == $0 || lowered.hasPrefix($0 + "/") }) { return true }
         let never = ["/applications", "/users", "/users/shared", "/library", "/usr", "/usr/local", "/opt", "/private", "/private/var", "/private/var/folders", "/private/tmp",
                      "/var", "/tmp", "/etc", homePath, homePath + "/library", homePath + "/applications", homePath + "/downloads", homePath + "/.config",
-                     homePath + "/.local", homePath + "/library/application support/steam", homePath + "/library/application support/steam/steamapps",
+                     homePath + "/.local", homePath + "/.local/share", homePath + "/.local/state", homePath + "/.local/bin", homePath + "/bin", homePath + "/.cache",
+                     homePath + "/library/application support/steam", homePath + "/library/application support/steam/steamapps",
                      homePath + "/library/application support/steam/steamapps/common"]
         if never.contains(lowered) { return true }
         // The standard Library folders themselves (~/Library/Caches, /Library/LaunchDaemons, …).

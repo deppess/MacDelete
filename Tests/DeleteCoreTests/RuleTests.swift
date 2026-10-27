@@ -233,4 +233,42 @@ final class RuleTests: XCTestCase {
         }
         XCTAssertFalse(Protection.isProtected(system.userLibrary.appending(path: "Caches/com.apple.dt.Xcode").path, roots: system.roots), "a removable Apple app's own caches")
     }
+
+    func testXDGSystemSharedAndHelpNameEvidence() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app", "CFBundleExecutable": "Example"])
+        let paths = ["Users/tester/.local/share/example/", "Users/tester/.cache/Example/", "Users/tester/.local/state/example/", "Library/Application Support/Example/",
+                     "Library/Logs/Example 2/", "Users/Shared/Example/", "Users/tester/Library/Caches/com.apple.helpd/Generated/Example Help*1.0/",
+                     "Library/Logs/DiagnosticReports/Example_2026-10-26-101010_mac.diag"]
+        for path in paths { try system.touch(path) }
+        try system.touch("Users/tester/.local/share/other/")
+        let plan = try system.plan("Example")
+        XCTAssertEqual(relative(plan.findings, system, tier: .name), Set(paths.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }))
+        XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact }, "never selected by default")
+        XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/Shared/Example") }?.reason, "named after the app, shared by all users")
+        for folder in [".local/share", ".local/state", ".local/bin", ".cache", "bin"] {
+            XCTAssertTrue(Protection.isProtected(system.home.appending(path: folder).path, roots: system.roots), folder)
+        }
+    }
+
+    /// Products inside a vendor's folder, named by the app; never the vendor folder.
+    func testVendorFolders() throws {
+        let system = try FakeSystem()
+        try system.makeApp("IntelliJ IDEA.app", metadata: ["CFBundleIdentifier": "com.jetbrains.intellij"])
+        try system.makeApp("Google Chrome.app", metadata: ["CFBundleIdentifier": "com.google.Chrome"])
+        try system.makeApp("Brave Browser.app", metadata: ["CFBundleIdentifier": "com.brave.Browser"])
+        try system.makeApp("Google Drive.app", metadata: ["CFBundleIdentifier": "com.google.drivefs"])
+        let support = "Users/tester/Library/Application Support"
+        for path in ["\(support)/JetBrains/IntelliJIdea2026.2/", "\(support)/JetBrains/IntelliJIdea2025.3/", "\(support)/JetBrains/PyCharm2026.1/", "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2/",
+                     "\(support)/Google/Chrome/", "\(support)/Google/Drive/", "\(support)/Google/Chrome Canary/", "\(support)/BraveSoftware/Brave-Browser/", "\(support)/BraveSoftware/Brave-Origin/",
+                     "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2/"] {
+            try system.touch(path)
+        }
+        func names(_ app: String) throws -> Set<String> { relative(try system.plan(app).findings, system, tier: .name) }
+        XCTAssertEqual(try names("IntelliJ IDEA"), ["\(support)/JetBrains/IntelliJIdea2026.2", "\(support)/JetBrains/IntelliJIdea2025.3", "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2",
+                                                     "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2"])
+        XCTAssertEqual(try names("Google Chrome"), ["\(support)/Google/Chrome"], "not Chrome Canary, not Drive, never Google itself")
+        XCTAssertEqual(try names("Google Drive"), ["\(support)/Google/Drive"])
+        XCTAssertEqual(try names("Brave Browser"), ["\(support)/BraveSoftware/Brave-Browser"])
+    }
 }

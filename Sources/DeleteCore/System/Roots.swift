@@ -27,6 +27,8 @@ public struct Roots: Sendable {
 
     /// The folder `library` lives in: "/" on a real system, the fake root in tests.
     public var systemRoot: String { library.standardizedFileURL.deletingLastPathComponent().path }
+    /// `/Users/Shared`, which every user of the Mac can write to.
+    public var sharedUsers: URL { URL(filePath: systemRoot, directoryHint: .isDirectory).appending(path: "Users/Shared", directoryHint: .isDirectory) }
 
     public init(home: URL, applicationRoots: [ApplicationRoot], homebrewPrefixes: [URL] = [], receipts: URL, spotlight: Bool = false, library: URL? = nil, userCache: URL? = nil, userTemp: URL? = nil, homebrewCatalog: URL? = nil) {
         self.home = home

@@ -103,7 +103,7 @@ public enum Protection {
 
         // The folders themselves, never their contents.
         let never = ["/", "/Applications", "/Users", "/Users/Shared", "/usr", "/usr/local", "/usr/local/bin", "/opt", "/private", "/private/var", "/private/tmp", "/var", "/tmp", "/etc"].map { root + $0 } + [
-                     homePath, "\(homePath)/Applications", "\(homePath)/Library", "\(homePath)/.config", "\(homePath)/.local", "\(homePath)/.local/share", "\(homePath)/.cache", libraryPath]
+                     homePath, "\(homePath)/Applications", "\(homePath)/Library", "\(homePath)/.config", "\(homePath)/.local", "\(homePath)/.local/share", "\(homePath)/.local/state", "\(homePath)/.local/bin", "\(homePath)/bin", "\(homePath)/.cache", libraryPath]
         if never.contains(where: { lowered == $0.lowercased() }) { return true }
         // Standard Library folders (Caches, Preferences, …) and their well-known subfolders.
         for base in ["\(homePath)/Library", libraryPath] {
