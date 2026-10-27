@@ -47,7 +47,7 @@ enum SteamGame {
         return gameContaining(application.path)
     }
 
-    private static func manifestText(_ path: String) -> String? {
+    static func manifestText(_ path: String) -> String? {
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= 1_048_576 else { return nil }
         return try? String(contentsOfFile: path, encoding: .utf8)
@@ -81,11 +81,74 @@ enum SteamGame {
     }
 
     /// A top-level `"key"  "value"` pair from a Valve KeyValues file.
-    private static func value(_ key: String, in text: String) -> String? {
+    static func value(_ key: String, in text: String) -> String? {
         for line in text.split(separator: "\n") {
             let parts = line.split(separator: "\"", omittingEmptySubsequences: true).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             if parts.count == 2, parts[0].caseInsensitiveCompare(key) == .orderedSame { return parts[1] }
         }
         return nil
+    }
+
+    /// Steam itself: its own folder holds the real client (`Steam.AppBundle`), caches, logs,
+    /// settings and local user data, all Steam's (the user decided deleting Steam takes all of
+    /// it, 2026-10-26). Installed games stay: each is an installed app of its own, and one app's
+    /// deletion never takes another's. Steam's leftovers inside `steamapps` (downloads, shader
+    /// caches, workshop items, manifests of games no longer there) go; the folders left empty go.
+    struct SteamClient {
+        var findings: [Finding] = []
+        var skipped: [Skipped] = []
+        var emptyFolders: [String] = []
+        var launchItems: [LaunchItem] = []
+    }
+
+    static func client(roots: Roots, others: [InstalledApp], collector: inout Collector) -> SteamClient {
+        var result = SteamClient()
+        let library = roots.home.appending(path: "Library", directoryHint: .isDirectory)
+        let steam = library.appending(path: "Application Support/Steam", directoryHint: .isDirectory)
+        let steamapps = steam.appending(path: "steamapps", directoryHint: .isDirectory)
+        let common = steamapps.appending(path: "common", directoryHint: .isDirectory)
+
+        // Games Steam lists as installed (by manifest), with the names the scan gave them.
+        var installed: [String: (name: String, manifest: String)] = [:]
+        for name in collector.list(steamapps) where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
+            let manifest = steamapps.appending(path: name).path
+            guard let text = manifestText(manifest), let directory = value("installdir", in: text), !directory.isEmpty, !directory.contains("/"),
+                  FileManager.default.fileExists(atPath: common.appending(path: directory).path) else { continue }
+            let title = others.first { $0.path.hasPrefix(common.appending(path: directory).path + "/") || $0.path == common.appending(path: directory).path }?.name ?? value("name", in: text) ?? directory
+            installed[directory.lowercased()] = (title, manifest)
+        }
+        let keptManifests = Set(installed.values.map(\.manifest))
+
+        for name in collector.list(steam) where name != "steamapps" && !name.hasPrefix(".") {
+            result.findings.append(Finding(path: steam.appending(path: name).path, tier: .exact, reason: "Steam's client and data"))
+        }
+        for name in collector.list(steamapps) where !name.hasPrefix(".") {
+            let path = steamapps.appending(path: name).path
+            if name == "common" {
+                for game in collector.list(common) where !game.hasPrefix(".") {
+                    let folder = common.appending(path: game).path
+                    if let entry = installed[game.lowercased()] {
+                        result.skipped.append(Skipped(path: folder, reason: "\(entry.name) is installed: delete it first (delete \(Format.shellQuoted(entry.name)))"))
+                    } else {
+                        result.findings.append(Finding(path: folder, tier: .exact, reason: "files of a game Steam no longer lists"))
+                    }
+                }
+            } else if keptManifests.contains(path) {
+                continue
+            } else {
+                result.findings.append(Finding(path: path, tier: .exact, reason: name.hasPrefix("appmanifest_") ? "manifest of a game no longer installed" : "Steam's downloads and caches"))
+            }
+        }
+        result.emptyFolders = [common.path, steamapps.path, steam.path].filter { FileManager.default.fileExists(atPath: $0) }
+
+        let cache = library.appending(path: "Caches/Steam")
+        if FileManager.default.fileExists(atPath: cache.path) { result.findings.append(Finding(path: cache.path, tier: .exact, reason: "Steam's cache")) }
+        // Steam's cleanup agent, whose label isn't a sub-identifier of Steam's.
+        let agent = library.appending(path: "LaunchAgents/com.valvesoftware.steamclean.plist")
+        if let job = LaunchItemScan.read(agent), job.label == "com.valvesoftware.steamclean" {
+            result.findings.append(Finding(path: agent.path, tier: .exact, reason: "launch agent"))
+            result.launchItems.append(LaunchItem(label: job.label, plist: agent.path, domain: .user))
+        }
+        return result
     }
 }

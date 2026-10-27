@@ -77,7 +77,7 @@ public enum Remover {
         let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
         guard path.hasPrefix("/"), !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
               root.isEmpty || path.hasPrefix(root + "/"),
-              !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root),
+              !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root) || isSteamSkeleton(String(path.dropFirst(root.count)), home: home, root: root),
               !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return false }
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
@@ -131,9 +131,17 @@ public enum Remover {
         let fullHome = home.standardizedFileURL.path
         let homePath = (!root.isEmpty && fullHome.hasPrefix(root + "/") ? String(fullHome.dropFirst(root.count)) : fullHome).lowercased()
         if lowered.isEmpty || lowered == "/" { return true }
-        let neverInside = ["/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec", "/usr/share", "/private/var/db", "/library/apple", "/dev", "/volumes",
+        let neverInside = ["/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec", "/usr/share", "/private/var/db", "/library/apple", "/dev",
                            homePath + "/documents", homePath + "/desktop", homePath + "/library/keychains", homePath + "/library/mobile documents"]
         if neverInside.contains(where: { lowered == $0 || lowered.hasPrefix($0 + "/") }) { return true }
+        // External volumes: an app and its own items there may go (decided 2026-10-26), but never
+        // /Volumes, a volume, its top-level folders, or another macOS installation's system,
+        // Library or users' folders on it.
+        if lowered == "/volumes" || lowered.hasPrefix("/volumes/") {
+            let parts = lowered.split(separator: "/").dropFirst()
+            if parts.count < 3 { return true }
+            if ["system", "library", "users", "private", "usr", "bin", "sbin"].contains(String(parts[parts.startIndex + 1])) { return true }
+        }
         let never = ["/applications", "/users", "/users/shared", "/library", "/usr", "/usr/local", "/opt", "/private", "/private/var", "/private/var/folders", "/private/tmp",
                      "/var", "/tmp", "/etc", homePath, homePath + "/library", homePath + "/applications", homePath + "/downloads", homePath + "/.config",
                      homePath + "/.local", homePath + "/.local/share", homePath + "/.local/state", homePath + "/.local/bin", homePath + "/bin", homePath + "/.cache",
@@ -146,6 +154,15 @@ public enum Remover {
             if rest.count == 1, Protection.standardLibraryFolders.contains(String(rest[0])) { return true }
         }
         return false
+    }
+
+    /// Steam's own folders, never deleted with contents (they hold the game library), may go
+    /// once empty, after Steam itself and every game are gone.
+    static func isSteamSkeleton(_ relative: String, home: URL, root: String) -> Bool {
+        let fullHome = home.standardizedFileURL.path
+        let homePath = (!root.isEmpty && fullHome.hasPrefix(root + "/") ? String(fullHome.dropFirst(root.count)) : fullHome).lowercased()
+        let steam = homePath + "/library/application support/steam"
+        return [steam, steam + "/steamapps", steam + "/steamapps/common"].contains(relative.lowercased())
     }
 
     /// macOS's own links (/var → /private/var, /tmp → /private/tmp, /etc → /private/etc).

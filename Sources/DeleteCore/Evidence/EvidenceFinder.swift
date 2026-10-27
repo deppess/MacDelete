@@ -149,6 +149,15 @@ public struct EvidenceFinder: Sendable {
 
         // Steam games: the game's folder and its manifest, and any desktop shortcut.
         for finding in SteamGame.findings(for: application, inventory: inventory, home: roots.home) { collector.add(finding, exempt: true) }
+        var steamFolders: [String] = []
+        var steamLaunchItems: [LaunchItem] = []
+        if application.bundleIdentifier?.lowercased() == "com.valvesoftware.steam" {
+            let client = SteamGame.client(roots: roots, others: others, collector: &collector)
+            client.findings.forEach { collector.add($0, exempt: true) }
+            client.skipped.forEach { collector.skip($0.path, $0.reason) }
+            steamFolders = client.emptyFolders
+            steamLaunchItems = client.launchItems
+        }
 
         // Homebrew's zap list: exact for a cask Homebrew installed (brew would delete it too),
         // name evidence from the catalog otherwise.
@@ -202,10 +211,14 @@ public struct EvidenceFinder: Sendable {
         let hasBackgroundItems = ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains { FileManager.default.fileExists(atPath: bundle.appending(path: $0).path) }
         if hasBackgroundItems { notes.append("Its entries in System Settings › General › Login Items & Extensions are removed by macOS once the app is gone.") }
 
-        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: collector.skipped, launchItems: launch.items, packages: packages.packages,
+        // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
+        let lowerEmptyFolders = Set((emptyFolders + steamFolders).map { $0.lowercased() })
+        let skipped = collector.skipped.filter { !lowerEmptyFolders.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: packages.packages,
                                unreadable: unreadable, notes: notes, running: running, homebrewCask: homebrewCask)
         plan.activeSystemExtensions = activeExtensions
-        plan.emptyFolders = emptyFolders
+        plan.emptyFolders = emptyFolders + steamFolders
+        plan.launchItems += steamLaunchItems.filter { item in !plan.launchItems.contains { $0.plist == item.plist } }
         return plan
     }
 

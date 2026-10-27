@@ -65,6 +65,13 @@ final class ScannerTests: XCTestCase {
 }
 
 final class SourceTests: XCTestCase {
+    func testClassificationByLocation() {
+        XCTAssertEqual(AppScanner.classification(forPath: "/Volumes/Backup/Applications/Example.app", home: "/Users/tester"), .user)
+        XCTAssertEqual(AppScanner.classification(forPath: "/Volumes/Backup/Installers/Example.app", home: "/Users/tester"), .auxiliary)
+        XCTAssertEqual(AppScanner.classification(forPath: "/Applications/Utilities/Example.app", home: "/Users/tester"), .user)
+        XCTAssertEqual(AppScanner.classification(forPath: "/System/Applications/Mail.app", home: "/Users/tester"), .system)
+    }
+
     func testCaskroomReceiptsGiveAppsTargetsSuitesAndPackages() throws {
         let system = try FakeSystem()
         let metadata = system.homebrew.appending(path: "Caskroom/raycast/.metadata")

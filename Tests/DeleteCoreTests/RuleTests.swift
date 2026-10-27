@@ -10,10 +10,6 @@ final class RuleTests: XCTestCase {
         return bundle
     }
 
-    func relative(_ findings: [Finding], _ system: FakeSystem, tier: EvidenceTier) -> Set<String> {
-        Set(findings.filter { $0.tier == tier }.map { $0.path.replacingOccurrences(of: system.root.path + "/", with: "") })
-    }
-
     func testTheRemainingIdentifierFolders() throws {
         let system = try FakeSystem()
         try makeExample(system)

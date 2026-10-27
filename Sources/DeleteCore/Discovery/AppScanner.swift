@@ -248,6 +248,9 @@ public struct AppScanner: Sendable {
         let home = home.hasSuffix("/") ? String(home.dropLast()) : home
         if path.hasPrefix("/Applications/") || path.hasPrefix(home + "/Applications/") { return .user }
         if path.contains("/steamapps/common/") { return .user }
+        // An external drive's own Applications folder (/Volumes/X/Applications/App.app).
+        let parts = path.split(separator: "/")
+        if parts.count >= 4, parts[0] == "Volumes", parts[2] == "Applications" { return .user }
         return .auxiliary
     }
 

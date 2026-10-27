@@ -122,3 +122,8 @@ func app(_ name: String, id: String? = nil, path: String? = nil, classification:
     let path = path ?? "/Applications/\(name).app"
     return InstalledApp(path: path, bundlePath: path, name: name, bundleIdentifier: id, alternateNames: alternateNames, version: nil, executableName: nil, classification: classification, source: .download, size: nil, linkTargets: [], hasAppStoreReceipt: false, isIOSApp: false, isSteamShortcut: false)
 }
+
+/// The findings of one tier, as paths relative to the fake root.
+func relative(_ findings: [Finding], _ system: FakeSystem, tier: EvidenceTier) -> Set<String> {
+    Set(findings.filter { $0.tier == tier }.map { $0.path.replacingOccurrences(of: system.root.path + "/", with: "") })
+}

@@ -65,6 +65,17 @@ final class RemoverTests: XCTestCase {
         XCTAssertEqual(failure(Remover.remove(try target(system.home), allowedRoot: system.root.path, home: system.home)), .neverDeletable)
     }
 
+    func testExternalVolumesAllowAppsButNotTheVolumeOrASystemOnIt() {
+        let home = URL(filePath: "/Users/tester", directoryHint: .isDirectory)
+        for refused in ["/Volumes", "/Volumes/Backup", "/Volumes/Backup/Applications", "/Volumes/Backup/System/Library/X.app", "/Volumes/Backup/Library/Application Support/X",
+                        "/Volumes/Backup/Users/someone/Library/Caches/x", "/Volumes/Backup/usr/local/bin/x"] {
+            XCTAssertTrue(Remover.isNeverDeletable(refused, home: home, root: ""), refused)
+        }
+        for allowed in ["/Volumes/Backup/Applications/Example.app", "/Volumes/Games/SteamLibrary/steamapps/common/Game", "/Volumes/Work/Apps/Tool.app"] {
+            XCTAssertFalse(Remover.isNeverDeletable(allowed, home: home, root: ""), allowed)
+        }
+    }
+
     func testRefusesItemsReachedThroughALinkedFolder() throws {
         let system = try FakeSystem()
         let elsewhere = try system.touch("elsewhere/")

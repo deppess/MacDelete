@@ -416,6 +416,47 @@ final class SteamAndAppleTests: XCTestCase {
         XCTAssertEqual(try system.plan("Escape").findings.map(\.path), [escaping.path], "a manifest naming .. is ignored")
     }
 
+    /// Deleting Steam takes all of Steam's own data, its folder included, but never a game that is
+    /// still installed; with no games left, the folder goes too.
+    func testSteamItselfTakesItsDataButNoInstalledGame() throws {
+        for withGame in [true, false] {
+            let system = try FakeSystem()
+            try system.makeApp("Steam.app", metadata: ["CFBundleIdentifier": "com.valvesoftware.steam"])
+            let steam = "Users/tester/Library/Application Support/Steam"
+            for path in ["\(steam)/Steam.AppBundle/Steam/Contents/MacOS/steam_osx", "\(steam)/userdata/1/config.vdf", "\(steam)/appcache/x", "\(steam)/registry.vdf",
+                         "\(steam)/steamapps/shadercache/1/x", "\(steam)/steamapps/common/Gone Game/data", "\(steam)/steamapps/libraryfolders.vdf", "Users/tester/Library/Caches/Steam/x"] {
+                try system.touch(path)
+            }
+            try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"999\"\n\t\"installdir\"\t\t\"Vanished\"\n}\n", to: system.root.appending(path: "\(steam)/steamapps/appmanifest_999.acf"))
+            if withGame {
+                try system.makeApp("Game.app", in: system.root.appending(path: "\(steam)/steamapps/common/Game"), metadata: ["CFBundleIdentifier": "com.studio.game"])
+                try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"42\"\n\t\"installdir\"\t\t\"Game\"\n}\n", to: system.root.appending(path: "\(steam)/steamapps/appmanifest_42.acf"))
+            }
+            try system.writePlist(["Label": "com.valvesoftware.steamclean", "Program": "/usr/bin/true"], to: system.userLibrary.appending(path: "LaunchAgents/com.valvesoftware.steamclean.plist"))
+
+            let plan = try system.plan("Steam")
+            let exact = relative(plan.findings, system, tier: .exact)
+            XCTAssertTrue(exact.isSuperset(of: ["\(steam)/Steam.AppBundle", "\(steam)/userdata", "\(steam)/appcache", "\(steam)/registry.vdf", "\(steam)/steamapps/shadercache",
+                                                "\(steam)/steamapps/common/Gone Game", "\(steam)/steamapps/appmanifest_999.acf", "\(steam)/steamapps/libraryfolders.vdf",
+                                                "Users/tester/Library/Caches/Steam", "Users/tester/Library/LaunchAgents/com.valvesoftware.steamclean.plist"]), "\(exact)")
+            XCTAssertTrue(plan.launchItems.contains { $0.label == "com.valvesoftware.steamclean" })
+            XCTAssertFalse(exact.contains { $0.contains("common/Game") || $0.hasSuffix("appmanifest_42.acf") }, "an installed game is never Steam's")
+            XCTAssertEqual(plan.skipped.contains { $0.path.hasSuffix("common/Game") && $0.reason.hasPrefix("Game is installed") }, withGame)
+
+            let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
+                .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
+            let folder = system.root.appending(path: steam).path
+            if withGame {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: folder + "/steamapps/common/Game/Game.app"))
+                XCTAssertTrue(FileManager.default.fileExists(atPath: folder + "/steamapps/appmanifest_42.acf"))
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder), ["steamapps"])
+            } else {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: folder), "nothing of Steam's is left")
+            }
+        }
+    }
+
     func testXcodeBuildDataIsKeptWhileAnotherXcodeRemains() throws {
         let system = try FakeSystem()
         try system.makeApp("Xcode.app", metadata: ["CFBundleIdentifier": "com.apple.dt.Xcode"])
