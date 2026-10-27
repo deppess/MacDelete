@@ -31,7 +31,8 @@ final class CompanionTests: XCTestCase {
 
         let utility = Companions.find(for: try application("Suite Utility", in: inventory), inventory: inventory, roots: system.roots, team: team)
         XCTAssertEqual(utility.companions.map(\.application.name), [])
-        XCTAssertEqual(utility.sameDeveloper.map(\.name), ["Other Product", "Suite"])
+        XCTAssertEqual(utility.sameDeveloper.map(\.name), ["Other Product"])
+        XCTAssertEqual(utility.partOf.map(\.name), ["Suite"])
 
         // Without a team, nothing is a companion.
         XCTAssertTrue(Companions.find(for: try application("Suite", in: inventory), inventory: inventory, roots: system.roots, team: { _ in nil }).companions.isEmpty)
@@ -84,6 +85,86 @@ final class CompanionTests: XCTestCase {
         let plan = try EvidenceFinder(roots: system.roots).plan(for: try application("Big", in: inventory), inventory: inventory, group: group)
         XCTAssertEqual(plan.packages, ["com.vendor.pkg.suite"])
         XCTAssertTrue(plan.skipped.isEmpty, "\(plan.skipped)")
+    }
+
+    /// `brew uninstall` removes every app of a cask: they go together whichever is named, and
+    /// even --no-companions can't keep them.
+    func testAppsOfOneHomebrewCaskAlwaysGoTogether() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Viewer.app", metadata: ["CFBundleIdentifier": "net.tool.viewer", "CFBundleName": "Viewer"])
+        try system.makeApp("Merge.app", metadata: ["CFBundleIdentifier": "net.tool.merge", "CFBundleName": "Merge"])
+        let metadata = system.homebrew.appending(path: "Caskroom/tool/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Viewer.app"]], ["app": ["Merge.app"]]]], to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+        let inventory = Inventory.load(roots: system.roots, sizes: false)
+
+        // No signatures at all: the cask alone ties them.
+        let merge = Companions.find(for: try application("Merge", in: inventory), inventory: inventory, roots: system.roots, team: { _ in nil })
+        XCTAssertEqual(merge.companions.map(\.application.name), ["Viewer"])
+        XCTAssertEqual(merge.companions.first?.inseparable, true)
+        XCTAssertEqual(Companions.find(for: try application("Viewer", in: inventory), inventory: inventory, roots: system.roots, team: { _ in nil }).companions.map(\.application.name), ["Merge"])
+
+        // Planned together, one brew uninstall runs and the other app counts as removed by it.
+        let group: Set<String> = [try application("Merge", in: inventory).path, try application("Viewer", in: inventory).path]
+        let finder = EvidenceFinder(roots: system.roots)
+        let plans = RemovalPlan.deduplicated([try finder.plan(for: try application("Merge", in: inventory), inventory: inventory, group: group),
+                                              try finder.plan(for: try application("Viewer", in: inventory), inventory: inventory, group: group)])
+        XCTAssertEqual(plans.map(\.homebrewCask), ["tool", nil])
+        XCTAssertEqual(plans.map(\.removedWithCask), [nil, "tool"])
+    }
+
+    /// One receipt installing equal peers has no main app: none takes another. A receipt named
+    /// after one of its apps makes that one the main app, whatever the sizes.
+    func testPackageGroupsNeedAClearMainApp() throws {
+        let system = try FakeSystem()
+        for name in ["Alpha", "Beta"] {
+            let bundle = try system.makeApp("\(name).app", metadata: ["CFBundleIdentifier": "com.vendor.\(name.lowercased())", "CFBundleName": name])
+            try system.write(String(repeating: "x", count: 100_000), to: bundle.appending(path: "Contents/Resources/data"))
+        }
+        try system.makeApp("Keyboard Tool.app", metadata: ["CFBundleIdentifier": "org.keys.tool", "CFBundleName": "Keyboard Tool"])
+        try system.makeApp("Keyboard Tool Viewer.app", metadata: ["CFBundleIdentifier": "org.keys.viewer", "CFBundleName": "Keyboard Tool Viewer"])
+        for (package, apps) in [("com.vendor.pkg.suite", ["Alpha", "Beta"]), ("org.keys.keyboard-tool", ["Keyboard Tool", "Keyboard Tool Viewer"])] {
+            try system.writePlist(["PackageIdentifier": package, "InstallPrefixPath": system.root.path], to: system.receipts.appending(path: "\(package).plist"))
+            try system.write(apps.map { "./Applications/\($0).app" }.joined(separator: "\n"), to: system.receipts.appending(path: "\(package).bom"))
+        }
+        try system.write("#!/bin/sh\nfor last; do :; done\nprintf '.\\n./Applications\\n'; cat \"$last\"; echo\n", to: system.tools.appending(path: "lsbom"), executable: true)
+        let inventory = Inventory.load(roots: system.roots, sizes: true)
+        let team = teams(["Alpha": "T", "Beta": "T", "Keyboard Tool": "K", "Keyboard Tool Viewer": "K"])
+
+        let alpha = Companions.find(for: try application("Alpha", in: inventory), inventory: inventory, roots: system.roots, team: team)
+        XCTAssertEqual(alpha.companions.count, 0)
+        XCTAssertEqual(alpha.sameDeveloper.map(\.name), ["Beta"])
+        let tool = Companions.find(for: try application("Keyboard Tool", in: inventory), inventory: inventory, roots: system.roots, team: team)
+        XCTAssertEqual(tool.companions.map(\.application.name), ["Keyboard Tool Viewer"])
+        let viewer = Companions.find(for: try application("Keyboard Tool Viewer", in: inventory), inventory: inventory, roots: system.roots, team: team)
+        XCTAssertEqual(viewer.companions.count, 0)
+        XCTAssertEqual(viewer.partOf.map(\.name), ["Keyboard Tool"])
+    }
+
+    func testUninstallersGoWithTheAppTheyreNamedAfter() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Studio 6.app", metadata: ["CFBundleIdentifier": "org.studio.app", "CFBundleName": "Studio 6"])
+        try system.makeApp("Vendor/Studio 6 Uninstaller.app", metadata: ["CFBundleIdentifier": "org.studio.uninstaller", "CFBundleName": "Studio 6 Uninstaller"])
+        try system.makeApp("Uninstall Other.app", metadata: ["CFBundleIdentifier": "net.else.uninstall", "CFBundleName": "Uninstall Other"])
+        let inventory = Inventory.load(roots: system.roots, sizes: false)
+        let found = Companions.find(for: try application("Studio 6", in: inventory), inventory: inventory, roots: system.roots, team: teams(["Studio 6": "S", "Studio 6 Uninstaller": "S", "Uninstall Other": "S"]))
+        XCTAssertEqual(found.companions.map(\.application.name), ["Studio 6 Uninstaller"])
+        XCTAssertEqual(Companions.uninstalledName("Uninstaller for Vuze"), "vuze")
+        XCTAssertEqual(Companions.uninstalledName("App Uninstaller"), nil, "too short to name an app")
+        XCTAssertEqual(Companions.uninstalledName("Uninstall Resolve"), "resolve")
+        XCTAssertNil(Companions.uninstalledName("Studio 6"))
+    }
+
+    /// Folders named after their main app, even loosely ("Adobe Acrobat DC" holding "Adobe
+    /// Acrobat", "Burn.localized"); a folder named after none of its apps takes nothing.
+    func testFolderMainApps() {
+        func apps(_ names: [String]) -> [InstalledApp] { names.map { app($0, id: "com.v.\(Companions.normalized($0))", path: "/Applications/F/\($0).app") } }
+        XCTAssertEqual(Companions.mainApp(of: apps(["Acrobat Distiller", "Adobe Acrobat", "Acrobat Uninstaller"]), label: "Adobe Acrobat DC", isFolder: true)?.name, "Adobe Acrobat")
+        XCTAssertEqual(Companions.mainApp(of: apps(["Burn"]) + apps(["Burn Helper"]), label: "Burn.localized", isFolder: true)?.name, "Burn")
+        XCTAssertEqual(Companions.mainApp(of: apps(["Skint", "SkintM"]), label: "skint109", isFolder: true)?.name, "Skint")
+        XCTAssertNil(Companions.mainApp(of: apps(["jbrk", "jqt", "jcon"]), label: "j9.7", isFolder: true))
+        XCTAssertNil(Companions.mainApp(of: apps(["Wacom Center", "Wacom Tablet Utility"]), label: "Wacom Tablet.localized", isFolder: true))
+        XCTAssertNil(Companions.mainApp(of: apps(["Microsoft Word", "Microsoft Excel"]), label: "Microsoft Office 2011", isFolder: true))
     }
 
     /// Each item in one plan only: a companion keeps its own bundle, and what an earlier plan

@@ -61,6 +61,9 @@ public struct RemovalPlan: Sendable {
     /// Homebrew removes the app first (`brew uninstall --cask <token>`); the rest, its zap list
     /// included, is deleted permanently by delete.
     public var homebrewCask: String?
+    /// Another app of the group runs `brew uninstall --cask` for this cask, which removes this
+    /// app too.
+    public var removedWithCask: String?
     /// Folders the cask's zap list names with `rmdir`: removed at the end only if nothing is left
     /// in them (a `.DS_Store` aside), never with their contents.
     public var emptyFolders: [String] = []
@@ -101,7 +104,7 @@ public struct RemovalPlan: Sendable {
         let bundles = plans.map { [$0.application.path, $0.application.bundlePath].map { $0.lowercased() } }
         func isInside(_ path: String, _ other: String) -> Bool { path == other || path.hasPrefix(other + "/") }
         var result: [RemovalPlan] = []
-        var taken: [String] = [], packages = Set<String>(), launchItems = Set<String>(), emptyFolders = Set<String>()
+        var taken: [String] = [], packages = Set<String>(), launchItems = Set<String>(), emptyFolders = Set<String>(), casks = Set<String>()
         for (index, var plan) in plans.enumerated() {
             plan.findings = plan.findings.filter { finding in
                 let lowered = finding.path.lowercased()
@@ -112,6 +115,8 @@ public struct RemovalPlan: Sendable {
             plan.packages = plan.packages.filter { packages.insert($0.lowercased()).inserted }
             plan.launchItems = plan.launchItems.filter { launchItems.insert($0.plist.lowercased()).inserted }
             plan.emptyFolders = plan.emptyFolders.filter { emptyFolders.insert($0.lowercased()).inserted }
+            // One brew uninstall removes every app of a cask.
+            if let cask = plan.homebrewCask, !casks.insert(cask).inserted { (plan.homebrewCask, plan.removedWithCask) = (nil, cask) }
             result.append(plan)
         }
         return result

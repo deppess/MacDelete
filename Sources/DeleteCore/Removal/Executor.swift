@@ -77,7 +77,7 @@ public struct Executor {
             switch Remover.remove(item.target, allowedRoot: allowedRoot, home: home) {
             case .success:
                 report.deleted.append(item.finding)
-            case .failure(.missing) where homebrewDone:
+            case .failure(.missing) where homebrewDone || plan.removedWithCask != nil:
                 report.removedByHomebrew.append(item.finding)
             case .failure(.missing):
                 report.warnings.append("\(Format.path(item.finding.path, home: home)) was already gone.")

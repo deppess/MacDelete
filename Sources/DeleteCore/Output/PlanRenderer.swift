@@ -68,7 +68,8 @@ public enum PlanRenderer {
         guard let main = plans.first else { return "" }
         var parts = [text(main, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width)]
         if plans.count > 1 {
-            parts.append("Installed with \(main.application.name.terminalInline), so deleted with it (keep \(plans.count == 2 ? "it" : "them") with --no-companions):")
+            let keepable = plans.dropFirst().contains { $0.removedWithCask == nil && $0.homebrewCask == nil }
+            parts.append("Installed with \(main.application.name.terminalInline), so deleted with it\(keepable ? " (keep \(plans.count == 2 ? "it" : "them") with --no-companions)" : ""):")
             for plan in plans.dropFirst() {
                 var lines = text(plan, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
                 if let reason = reasons[plan.application.path] { lines[0] += "   " + reason.terminalInline }

@@ -106,9 +106,10 @@ public enum DeleteCLI {
             return 2
         }
 
-        // Apps installed with it go with it, unless they can't be deleted at all.
-        let found = invocation.withCompanions && Protection.refusal(for: application) == nil ? Companions.find(for: application, inventory: inventory, roots: roots) : Companions.Result()
-        let companions = found.companions.filter { Protection.refusal(for: $0.application) == nil }
+        // Apps installed with it go with it, unless they can't be deleted at all. --no-companions
+        // can't keep the apps of the same Homebrew cask: brew uninstall removes them all.
+        let found = Protection.refusal(for: application) == nil ? Companions.find(for: application, inventory: inventory, roots: roots) : Companions.Result()
+        let companions = found.companions.filter { Protection.refusal(for: $0.application) == nil && (invocation.withCompanions || $0.inseparable) }
         var reasons: [String: String] = [:]
         for companion in companions { reasons[companion.application.path] = companion.reason }
         let group = Set([application.path] + companions.map(\.application.path))
@@ -127,6 +128,9 @@ public enum DeleteCLI {
             }
             var main = try finder.plan(for: application, inventory: inventory, group: group, timing: timing)
             if let folder = found.folder, !companions.isEmpty { main.emptyFolders.append(folder) }
+            if !found.partOf.isEmpty {
+                main.notes.append("It was installed as part of \(found.partOf.map { $0.name.terminalInline }.joined(separator: " and ")); deleting \(found.partOf.count == 1 ? "that" : "those") removes it too.")
+            }
             if !found.sameDeveloper.isEmpty {
                 main.notes.append("Also by the same developer, not included: \(found.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
             }
@@ -225,10 +229,12 @@ public enum DeleteCLI {
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
         // Companions first (their launch items stopped and their privacy settings reset while
-        // they're still installed), then the app.
+        // they're still installed), then the app; but a plan that runs brew uninstall goes first,
+        // since that removes the cask's other apps too.
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
         var report = ExecutionReport()
-        for index in plans.indices.reversed() {
+        let order = plans.indices.filter { plans[$0].homebrewCask != nil } + plans.indices.reversed().filter { plans[$0].homebrewCask == nil }
+        for index in order {
             let part = executor.run(plans[index], targets: targets[index], isRoot: isRoot, casks: inventory.casks)
             report.deleted += part.deleted
             report.failed += part.failed
