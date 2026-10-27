@@ -178,41 +178,67 @@ enum HomebrewZap {
 /// unescaping the payload and finding each cask's extent in one pass takes ~25 ms, and only the
 /// few matching casks are parsed.
 enum CatalogScanner {
+    /// Walks the catalog's "payload" string once (~15 MB) without unescaping it, tracking only
+    /// the keys at depths 1 and 2 ("casks" and each cask's token). Only a cask that mentions a
+    /// needle is unescaped and parsed.
+    ///
+    /// Inside the payload, a quote preceded by n backslashes is: the payload's end (n even), a
+    /// quote of the inner JSON (n = 1, 5, …, `\"` or `\\\\\"`), or an escaped quote inside an
+    /// inner string (n = 3, 7, …, `\\\"`).
     static func casks(in data: Data, mentioning needles: [String]) -> [(token: String, cask: [String: Any])]? {
-        guard let payload = unescapedPayload(data) else { return nil }
+        let marker = Array("\"payload\":\"".utf8)
         let needleBytes = needles.map { Array($0.utf8) }
-        return payload.withUnsafeBufferPointer { bytes -> [(String, [String: Any])]? in
+        let casksKey = Array("casks".utf8)
+        return data.withUnsafeBytes { raw -> [(String, [String: Any])]? in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            guard let base = bytes.baseAddress, let start = firstIndex(of: marker, in: bytes) else { return nil }
+            func backslashes(before index: Int) -> Int {
+                var count = 0
+                while bytes[index - 1 - count] == 0x5C { count += 1 }
+                return count
+            }
             var result: [(String, [String: Any])] = []
-            var depth = 0, inString = false, escaped = false
-            var stringStart = 0, lastKeyAtDepth: [Int: String] = [:]
-            var inCasks = false, caskStart = 0, caskToken = ""
+            var depth = 0
+            // The last key seen at depth 1 and 2, as byte ranges.
+            var depthOneKey = 0..<0, depthTwoKey = 0..<0
+            var inCasks = false, caskStart = 0, caskToken = 0..<0
             var sawCasks = false
-            var index = 0
+            var index = start + marker.count
             while index < bytes.count {
                 let byte = bytes[index]
-                if inString {
-                    if escaped { escaped = false } else if byte == 0x5C { escaped = true } else if byte == 0x22 {
-                        inString = false
-                        // A string followed by ':' is a key.
-                        var next = index + 1
-                        while next < bytes.count, bytes[next] == 0x20 || bytes[next] == 0x0A || bytes[next] == 0x0D || bytes[next] == 0x09 { next += 1 }
-                        if next < bytes.count, bytes[next] == 0x3A {
-                            lastKeyAtDepth[depth] = String(decoding: UnsafeBufferPointer(rebasing: bytes[(stringStart + 1)..<index]), as: UTF8.self)
-                        }
+                if byte == 0x22 {
+                    let escapes = backslashes(before: index)
+                    // The payload's end, or a stray escaped quote: malformed.
+                    guard escapes % 4 == 1 else { return escapes % 2 == 0 && sawCasks ? result : nil }
+                    // An inner string: jump to its closing quote (memchr, since strings are most
+                    // of the payload).
+                    let stringStart = index + 1
+                    var end = index
+                    repeat {
+                        guard let found = memchr(base + end + 1, 0x22, bytes.count - end - 1) else { return nil }
+                        end = base.distance(to: found.assumingMemoryBound(to: UInt8.self))
+                        let count = backslashes(before: end)
+                        if count % 4 == 1 { break }
+                        guard count % 4 == 3 else { return nil }
+                    } while true
+                    index = end
+                    // A string followed by ':' is a key; only depths 1 and 2 matter. Compact JSON
+                    // has no whitespace before the colon.
+                    if depth == 1 || depth == 2, index + 1 < bytes.count, bytes[index + 1] == 0x3A {
+                        let key = stringStart..<(index - 1)
+                        if depth == 1 { depthOneKey = key } else { depthTwoKey = key }
                     }
-                } else if byte == 0x22 {
-                    inString = true
-                    stringStart = index
                 } else if byte == 0x7B { // {
                     depth += 1
-                    if depth == 2, lastKeyAtDepth[1] == "casks" { inCasks = true; sawCasks = true }
-                    if inCasks, depth == 3 { caskStart = index; caskToken = lastKeyAtDepth[2] ?? "" }
+                    if depth == 2, UnsafeBufferPointer(rebasing: bytes[depthOneKey]).elementsEqual(casksKey) { inCasks = true; sawCasks = true }
+                    if inCasks, depth == 3 { caskStart = index; caskToken = depthTwoKey }
                 } else if byte == 0x7D { // }
                     if inCasks, depth == 3 {
                         let slice = UnsafeBufferPointer(rebasing: bytes[caskStart...index])
-                        if needleBytes.contains(where: { contains(slice, $0) }),
-                           let cask = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any] {
-                            result.append((caskToken, cask))
+                        if needleBytes.contains(where: { contains(slice, $0) }), let json = unescape(slice),
+                           let cask = try? JSONSerialization.jsonObject(with: Data(json)) as? [String: Any],
+                           let token = unescape(UnsafeBufferPointer(rebasing: bytes[caskToken])) {
+                            result.append((String(decoding: token, as: UTF8.self), cask))
                         }
                     }
                     if inCasks, depth == 2 { inCasks = false }
@@ -220,43 +246,38 @@ enum CatalogScanner {
                 }
                 index += 1
             }
-            return sawCasks ? result : nil
+            return nil
         }
     }
 
-    /// The bytes of the top-level "payload" string, unescaped.
-    static func unescapedPayload(_ data: Data) -> [UInt8]? {
-        let marker = Array("\"payload\":\"".utf8)
-        return data.withUnsafeBytes { raw -> [UInt8]? in
-            let bytes = raw.bindMemory(to: UInt8.self)
-            guard let start = firstIndex(of: marker, in: bytes) else { return nil }
-            var output: [UInt8] = []
-            output.reserveCapacity(bytes.count)
-            var index = start + marker.count
-            while index < bytes.count {
-                let byte = bytes[index]
-                if byte == 0x22 { return output }
-                if byte != 0x5C { output.append(byte); index += 1; continue }
-                guard index + 1 < bytes.count else { return nil }
-                let code = bytes[index + 1]
-                switch code {
-                case 0x22, 0x5C, 0x2F: output.append(code)
-                case 0x62: output.append(0x08)
-                case 0x66: output.append(0x0C)
-                case 0x6E: output.append(0x0A)
-                case 0x72: output.append(0x0D)
-                case 0x74: output.append(0x09)
-                case 0x75: // \uXXXX, re-escaped so the inner JSON parser decodes it (and any surrogate pair).
-                    guard index + 5 < bytes.count else { return nil }
-                    output += [0x5C, 0x75] + Array(UnsafeBufferPointer(rebasing: bytes[(index + 2)...(index + 5)]))
-                    index += 6
-                    continue
-                default: return nil
-                }
-                index += 2
+    /// Text from inside a JSON string, unescaped. `\uXXXX` is kept as is, so the inner JSON parser
+    /// decodes it (and any surrogate pair).
+    static func unescape(_ bytes: UnsafeBufferPointer<UInt8>) -> [UInt8]? {
+        var output: [UInt8] = []
+        output.reserveCapacity(bytes.count)
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+            if byte != 0x5C { output.append(byte); index += 1; continue }
+            guard index + 1 < bytes.count else { return nil }
+            let code = bytes[index + 1]
+            switch code {
+            case 0x22, 0x5C, 0x2F: output.append(code)
+            case 0x62: output.append(0x08)
+            case 0x66: output.append(0x0C)
+            case 0x6E: output.append(0x0A)
+            case 0x72: output.append(0x0D)
+            case 0x74: output.append(0x09)
+            case 0x75:
+                guard index + 5 < bytes.count else { return nil }
+                output += [0x5C, 0x75] + Array(UnsafeBufferPointer(rebasing: bytes[(index + 2)...(index + 5)]))
+                index += 6
+                continue
+            default: return nil
             }
-            return nil
+            index += 2
         }
+        return output
     }
 
     private static func firstIndex(of needle: [UInt8], in bytes: UnsafeBufferPointer<UInt8>) -> Int? {

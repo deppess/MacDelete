@@ -313,9 +313,12 @@ final class HomebrewZapTests: XCTestCase {
         ]
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: ["formulae": ["x": ["y": 1]], "casks": casks]), as: UTF8.self)
         let file = try JSONSerialization.data(withJSONObject: ["payload": payload, "signatures": []])
-        XCTAssertEqual(CatalogScanner.unescapedPayload(file).map { String(decoding: $0, as: UTF8.self) }, payload)
         let found = try XCTUnwrap(CatalogScanner.casks(in: file, mentioning: ["Example.app"]))
         XCTAssertEqual(found.map(\.token), ["example"])
+        // Braces and escaped quotes inside strings don't confuse the walk; escapes are decoded.
+        let other = try XCTUnwrap(CatalogScanner.casks(in: file, mentioning: ["Other.app"]))
+        XCTAssertEqual(other.map(\.token), ["other"])
+        XCTAssertEqual(other.first?.cask["desc"] as? String, "braces } and \"quotes\" and \\u00e9")
 
         let system = try FakeSystem()
         let catalog = system.home.appending(path: "Library/Caches/Homebrew/api")

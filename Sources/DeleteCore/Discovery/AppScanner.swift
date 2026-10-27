@@ -1,5 +1,8 @@
 import Foundation
 
+/// Bundles whose nested apps are their own helpers, never installed apps.
+let nestedBundleExtensions: Set<String> = ["app", "framework", "bundle", "xpc", "appex", "plugin", "kext", "systemextension"]
+
 /// Whether `url` is plausibly a top-level installed application: it has a `Contents` directory
 /// (or is an iOS app wrapper), and it isn't nested inside another bundle. A folder merely named
 /// "*.app" is not a bundle (the App Sandbox creates empty "<extension id>.app" script folders), and
@@ -7,7 +10,6 @@ import Foundation
 func isPlausibleApplicationBundle(_ url: URL) -> Bool {
     let fileManager = FileManager.default
     guard fileManager.fileExists(atPath: url.appending(path: "Contents").path) || isIOSWrapper(url) else { return false }
-    let nestedBundleExtensions: Set<String> = ["app", "framework", "bundle", "xpc", "appex", "plugin", "kext", "systemextension"]
     var ancestor = url.deletingLastPathComponent()
     while ancestor.pathComponents.count > 1 {
         if nestedBundleExtensions.contains(ancestor.pathExtension.lowercased()) { return false }
@@ -92,7 +94,12 @@ public struct AppScanner: Sendable {
                 // application bundle (macOS ships /Applications/Safari.app this way) is followed.
                 let isFolderBundle = root.extensionlessBundles && enumerator.level == 1 && candidate.pathExtension.lowercased() != "app"
                     && FileManager.default.fileExists(atPath: candidate.appending(path: "Contents/Info.plist").path)
-                guard candidate.pathExtension.lowercased() == "app" || isFolderBundle else { continue }
+                guard candidate.pathExtension.lowercased() == "app" || isFolderBundle else {
+                    // Nothing inside another bundle is an installed app (CoreServices' plug-in
+                    // bundles alone hold ~5,000 entries).
+                    if nestedBundleExtensions.contains(candidate.pathExtension.lowercased()) { enumerator.skipDescendants() }
+                    continue
+                }
                 enumerator.skipDescendants()
                 let isSymbolicLink = (try? candidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                 let normalized = candidate.standardizedFileURL
@@ -106,21 +113,36 @@ public struct AppScanner: Sendable {
             }
         }
 
+        // The walk's bundles are read while Spotlight finishes.
+        let walked = candidates
+        let walkedResults = Concurrent { Self.read(walked) }
+
         var spotlightSizes: [String: Int64] = [:]
         if let spotlight {
             do {
-                for (path, size) in try spotlight.value.get() {
-                    let rawCandidate = URL(filePath: path).standardizedFileURL
+                let records = try spotlight.value.get()
+                // Each result's file checks are independent, so they run across all cores; only
+                // the de-duplication below runs in order.
+                let checked = UnsafeResults<(candidate: URL, bundle: URL?, identity: BundleIdentity?, classification: AppClassification)>(count: records.count)
+                DispatchQueue.concurrentPerform(iterations: records.count) { index in
+                    let rawCandidate = URL(filePath: records[index].path).standardizedFileURL
                     let isSymbolicLink = (try? rawCandidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                     // Directory components are resolved, but a candidate that is itself a link keeps
                     // its own name, matching the walk.
                     let candidate = isSymbolicLink ? rawCandidate.deletingLastPathComponent().resolvingSymlinksInPath().appending(path: rawCandidate.lastPathComponent) : rawCandidate.resolvingSymlinksInPath()
-                    if let size { spotlightSizes[candidate.path] = size }
                     guard candidate.pathExtension.lowercased() == "app", isPlausibleApplicationBundle(candidate),
-                          let bundle = resolvedBundle(candidate, isSymbolicLink: isSymbolicLink),
-                          seenIdentities.insert(fileIdentity(bundle) ?? BundleIdentity(path: bundle.path)).inserted,
-                          seenCandidates.insert(candidate.path).inserted else { continue }
-                    candidates.append((candidate, bundle, classify(isSymbolicLink ? bundle : candidate)))
+                          let bundle = scanner.resolvedBundle(candidate, isSymbolicLink: isSymbolicLink) else {
+                        checked[index] = (candidate, nil, nil, .user)
+                        return
+                    }
+                    checked[index] = (candidate, bundle, scanner.fileIdentity(bundle), scanner.classify(isSymbolicLink ? bundle : candidate))
+                }
+                for (record, check) in zip(records, checked.values) {
+                    if let size = record.size { spotlightSizes[check.candidate.path] = size }
+                    guard let bundle = check.bundle,
+                          seenIdentities.insert(check.identity ?? BundleIdentity(path: bundle.path)).inserted,
+                          seenCandidates.insert(check.candidate.path).inserted else { continue }
+                    candidates.append((check.candidate, bundle, check.classification))
                 }
             } catch {
                 // Spotlight can be disabled or exclude folders; the walk of the roots still stands.
@@ -128,15 +150,10 @@ public struct AppScanner: Sendable {
             }
         }
 
-        // Each bundle's metadata is read independently, so they're read across all cores.
         let found = candidates
-        let results = UnsafeResults<Result<InstalledApp?, Error>>(count: found.count)
-        DispatchQueue.concurrentPerform(iterations: found.count) { index in
-            let candidate = found[index]
-            results[index] = Result { try Self.application(at: candidate.url, bundle: candidate.bundle, classification: candidate.classification) }
-        }
+        let results = walkedResults.value + Self.read(Array(found[walked.count...]))
         var applications: [InstalledApp] = []
-        for (candidate, result) in zip(found, results.values) {
+        for (candidate, result) in zip(found, results) {
             switch result {
             case var .success(application?):
                 application.size = spotlightSizes[candidate.url.path] ?? spotlightSizes[candidate.bundle.path]
@@ -148,6 +165,16 @@ public struct AppScanner: Sendable {
             }
         }
         return ScanResult(applications: applications.sorted { $0.path < $1.path }, warnings: warnings, complete: complete)
+    }
+
+    /// Each bundle's metadata is read independently, so they're read across all cores.
+    private static func read(_ candidates: [(url: URL, bundle: URL, classification: AppClassification)]) -> [Result<InstalledApp?, Error>] {
+        let results = UnsafeResults<Result<InstalledApp?, Error>>(count: candidates.count)
+        DispatchQueue.concurrentPerform(iterations: candidates.count) { index in
+            let candidate = candidates[index]
+            results[index] = Result { try application(at: candidate.url, bundle: candidate.bundle, classification: candidate.classification) }
+        }
+        return results.values
     }
 
     /// Reads one bundle. Also used for a path given on the command line that the scan didn't find.

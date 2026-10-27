@@ -49,7 +49,7 @@ public struct EvidenceFinder: Sendable {
         let roots = self.roots
         let otherPaths = Set(others.flatMap { [$0.path, $0.bundlePath] })
         let knownPackages = inventory.receipts.packages(for: application.bundlePath)
-        let packagesTask = Concurrent { PackageEvidence.scan(application: application, known: knownPackages, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
+        let packagesTask = Concurrent { PackageEvidence.scan(application: application, known: knownPackages, receiptsRead: !inventory.receipts.packagesByApplication.isEmpty, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
         let groupsTask = Concurrent { Self.applicationGroups(bundle: bundle, embedded: embedded, others: others) }
         let catalogTask: Concurrent<(token: String, paths: [String])?>? = {
             if case .homebrew(_, true) = application.source { return nil }
@@ -130,14 +130,14 @@ public struct EvidenceFinder: Sendable {
         collector.unreadable += launch.unreadable
 
         // Command-line links into the app, and plug-ins it installed into the Library.
-        let links = CommandLinks.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector)
-        links.forEach { collector.add($0) }
+        for finding in CommandLinks.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
         let plugins = PluginBundles.scan(application: application, ownership: ownership, roots: roots, collector: &collector)
         plugins.findings.forEach { collector.add($0) }
         plugins.skipped.forEach { collector.skip($0.path, $0.reason) }
-        // Packages that installed any of these (only the app's launch daemon, say), looked up
-        // while the app's own packages are.
-        let installedBy = Concurrent { PackageEvidence.packagesInstalling(items: launch.findings + links + plugins.findings, application: application, roots: roots, runner: runner) }
+        // Packages that installed anything found so far (only the app's launch daemon, say),
+        // looked up while the app's own packages are.
+        let foundSoFar = collector.findings
+        let installedBy = Concurrent { PackageEvidence.packagesInstalling(items: foundSoFar, application: application, roots: roots, runner: runner) }
 
         // Browser native-messaging manifests that run a program inside the app.
         for finding in NativeMessaging.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }

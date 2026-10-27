@@ -17,12 +17,18 @@ enum PackageEvidence {
         var skipped: [Skipped] = []
     }
 
-    /// `known` are the packages the inventory's receipt map gives the bundle: `pkgutil
-    /// --file-info` misses a package whose install location is the bundle itself.
-    static func scan(application: InstalledApp, known: [String] = [], roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
+    /// `known` are the packages the inventory's receipt map gives the bundle. The map holds every
+    /// package but Apple's, including those `pkgutil --file-info` misses (any not installed at
+    /// "/"), so `pkgutil` (~25 ms) is asked only for Apple's apps (Xcode's App Store receipt), or
+    /// when `receiptsRead` is false.
+    static func scan(application: InstalledApp, known: [String], receiptsRead: Bool, roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
         let (pkgutil, lsbom) = (roots.tools.pkgutil, roots.tools.lsbom)
-        var packages = packagesInstalling(application.bundlePath, runner: runner, pkgutil: pkgutil)
-        for package in known where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) { packages.append(package) }
+        var packages = known
+        if !receiptsRead || application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") == true {
+            for package in packagesInstalling(application.bundlePath, runner: runner, pkgutil: pkgutil) where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) {
+                packages.append(package)
+            }
+        }
         guard !packages.isEmpty else { return Result() }
         var result = Result()
 
