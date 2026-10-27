@@ -549,11 +549,12 @@ struct Collector {
     mutating func list(_ folder: URL) -> [String] {
         if let cached = listings[folder.path] { return cached }
         var names: [String] = []
-        do {
-            names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        } catch {
-            let code = (error as NSError).underlyingErrors.first.map { ($0 as NSError).code } ?? (error as NSError).code
-            if FileManager.default.fileExists(atPath: folder.path) || code == Int(EPERM) || code == Int(EACCES) || code == NSFileReadNoPermissionError { unreadable.append(folder.path) }
+        switch Directory.names(atPath: folder.path) {
+        case let .success(found):
+            names = found
+        case let .failure(error):
+            // Missing or not a folder means nothing there; anything else means "couldn't look".
+            if error.code != ENOENT && error.code != ENOTDIR { unreadable.append(folder.path) }
         }
         listings[folder.path] = names
         return names

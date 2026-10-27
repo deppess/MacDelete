@@ -40,10 +40,13 @@ struct Ownership {
         }
         // Otherwise the longest identifier followed by a dot. A bare prefix needs at least three
         // components, so a two-part identifier like `com.example` never claims its whole vendor.
+        // (Dots are counted rather than the name split: this runs for every entry of every folder.)
         var candidate = Substring(lowered)
-        while let dot = candidate.lastIndex(of: ".") {
+        var dots = lowered.reduce(0) { $1 == "." ? $0 + 1 : $0 }
+        while dots >= 3, let dot = candidate.lastIndex(of: ".") {
             candidate = candidate[..<dot]
-            if candidate.split(separator: ".").count >= 3, let apps = claims[String(candidate)] { return owner(apps) }
+            dots -= 1
+            if let apps = claims[String(candidate)] { return owner(apps) }
         }
         return nil
     }
