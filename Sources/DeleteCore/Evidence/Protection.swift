@@ -111,12 +111,21 @@ public enum Protection {
             guard lowered.hasPrefix(prefix) else { continue }
             let rest = lowered.dropFirst(prefix.count).split(separator: "/")
             if rest.count == 1, standardLibraryFolders.contains(String(rest[0])) || rest[0].hasPrefix("com.apple.") { return true }
-            if rest.count == 2, ["preferences/byhost", "audio/plug-ins", "application support/crashreporter", "caches/sentrycrash", "logs/diagnosticreports",
-                                  "application support/com.apple.sharedfilelist", "caches/com.plausiblelabs.crashreporter.data"].contains(rest.joined(separator: "/")) { return true }
-            if rest.count == 3, rest.joined(separator: "/") == "application support/com.apple.sharedfilelist/com.apple.lsSharedFileList.ApplicationRecentDocuments".lowercased() { return true }
+            if standardNestedFolders.contains(rest.joined(separator: "/")) { return true }
         }
         return false
     }
+
+    /// Well-known folders below the standard ones, each holding many apps' items. Lowercased.
+    static let standardNestedFolders: Set<String> = [
+        "preferences/byhost", "audio/plug-ins", "audio/plug-ins/components", "audio/plug-ins/vst", "audio/plug-ins/vst3", "audio/plug-ins/hal", "audio/plug-ins/clap",
+        "audio/midi drivers", "coremediaio/plug-ins", "coremediaio/plug-ins/dal", "application support/crashreporter", "caches/sentrycrash", "logs/diagnosticreports",
+        "caches/com.plausiblelabs.crashreporter.data", "webkit/databases", "webkit/databases/___indexeddb",
+        // macOS's own folders that hold an item per app.
+        "application support/com.apple.sharedfilelist", "application support/com.apple.sharedfilelist/com.apple.lssharedfilelist.applicationrecentdocuments",
+        "caches/com.apple.helpd", "caches/com.apple.helpd/generated", "caches/com.apple.nsurlsessiond", "caches/com.apple.nsurlsessiond/downloads",
+        "preferences/com.apple.fileprovider",
+    ]
 
     /// Folders macOS keeps directly in ~/Library and /Library. Lowercased.
     static let standardLibraryFolders: Set<String> = Set([

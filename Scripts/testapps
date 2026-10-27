@@ -64,6 +64,11 @@ plain)
     launchctl bootout "gui/$UID" "$agent" 2>/dev/null || true
     launch_item "$agent" com.macdelete.test.plain.agent "$app/Contents/MacOS/DeleteTest"
     launchctl bootstrap "gui/$UID" "$agent"
+    # A command-line link into the bundle, and a QuickLook plug-in with its own sub-identifier.
+    mkdir -p "$HOME/.local/bin" "$library/QuickLook"
+    ln -sfn "$app/Contents/MacOS/DeleteTest" "$HOME/.local/bin/deletetest-plain"
+    make_app "DeleteTest Preview" com.macdelete.test.plain.quicklook "$library/QuickLook"
+    mv "$library/QuickLook/DeleteTest Preview.app" "$library/QuickLook/DeleteTest Preview.qlgenerator" 2>/dev/null || true
     open -g "$app"
     sleep 1
     print "Installed DeleteTest Plain (running, launch agent loaded). Try: delete --dry-run \"DeleteTest Plain\""
@@ -176,6 +181,8 @@ check)
         [[ -e "$library/Application Support/$name" ]] && print "  NAME   ~/Library/Application Support/$name (name match: stays unless --include-name-matches)"
         case $id in
         *.plain)
+            report "command link" "$HOME/.local/bin/deletetest-plain"
+            report "QuickLook plug-in" "$library/QuickLook/DeleteTest Preview.qlgenerator"
             report "launch agent" "$library/LaunchAgents/$id.agent.plist"
             launchctl print "gui/$UID/$id.agent" >/dev/null 2>&1 && print "  LEFT   launch agent $id.agent is still loaded" ;;
         *.brew)

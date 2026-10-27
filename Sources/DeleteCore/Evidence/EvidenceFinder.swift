@@ -65,6 +65,11 @@ public struct EvidenceFinder: Sendable {
         identifierFolders += [
             (library.appending(path: "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"), "recent documents list"),
             (library.appending(path: "Caches/com.plausiblelabs.crashreporter.data"), "crash data"),
+            // Help Viewer's copy of the app's help book (`<id>.help*<version>`).
+            (library.appending(path: "Caches/com.apple.helpd/Generated"), "help cache"),
+            (library.appending(path: "Caches/com.apple.nsurlsessiond/Downloads"), "background downloads"),
+            (library.appending(path: "WebKit/Databases/___IndexedDB"), "web storage"),
+            (library.appending(path: "Preferences/com.apple.FileProvider"), "file provider settings"),
         ]
         identifierFolders += ["Application Support", "Caches", "Preferences", "Logs", "Input Methods"].map { (roots.library.appending(path: $0, directoryHint: .isDirectory), nil) }
         identifierFolders += [
@@ -120,6 +125,12 @@ public struct EvidenceFinder: Sendable {
         let launch = LaunchItemScan.scan(roots: roots, bundlePath: application.bundlePath, identifiers: identifiers, helperLabels: helperLabels, ownership: ownership)
         launch.findings.forEach { collector.add($0) }
         collector.unreadable += launch.unreadable
+
+        // Command-line links into the app, and plug-ins it installed into the Library.
+        for finding in CommandLinks.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
+        let plugins = PluginBundles.scan(application: application, ownership: ownership, roots: roots, collector: &collector)
+        plugins.findings.forEach { collector.add($0) }
+        plugins.skipped.forEach { collector.skip($0.path, $0.reason) }
 
         // Browser native-messaging manifests that run a program inside the app.
         for finding in NativeMessaging.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
