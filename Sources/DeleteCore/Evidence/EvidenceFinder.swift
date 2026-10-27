@@ -34,7 +34,10 @@ public struct EvidenceFinder: Sendable {
             guard other.classification == .auxiliary, let identifier = other.bundleIdentifier?.lowercased() else { return true }
             return !lowerOwn.contains { identifier.hasPrefix($0 + ".") }
         }
-        let ownership = Ownership(targetPath: application.bundlePath, targetIdentifiers: identifiers, otherApplications: others)
+        // A helper whose identifier isn't the app's own family (Office's shared error reporter) may
+        // be embedded in other apps of the same vendor too; those apps are read to find out.
+        let ownership = Ownership(targetPath: application.bundlePath, targetIdentifiers: identifiers, otherApplications: others,
+                                  otherEmbedded: Self.sharedEmbedded(identifiers: identifiers, main: application.bundleIdentifier, others: others))
         timing?.mark("  embedded bundles (\(embedded.count))")
         // How to describe an item that belongs to a helper rather than the app itself.
         var helperKinds: [String: String] = [:]
@@ -216,6 +219,10 @@ public struct EvidenceFinder: Sendable {
         if findings.contains(where: { $0.reason == "audio driver" }) {
             notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
         }
+        // A suite's shared updater outlives its last app (Microsoft AutoUpdate after Office).
+        notes += Self.orphanedUpdaters(after: application, others: others).map {
+            "\($0.name.terminalInline) only updates this vendor's apps, and this is the last one: delete it too with delete \(Format.shellQuoted($0.path))"
+        }
         if PlanNotes.isInDock(application.path, roots: roots) || PlanNotes.isInDock(application.bundlePath, roots: roots) {
             notes.append("It's in your Dock, where it will show as a question mark until you drag it out.")
         }
@@ -263,9 +270,15 @@ public struct EvidenceFinder: Sendable {
             }
         }
         let preferences = library.appending(path: "Preferences", directoryHint: .isDirectory)
-        for name in collector.list(preferences) where name.lowercased().hasSuffix(".plist") {
-            let base = String(name.dropLast(6))
-            if !base.contains("."), isNamed(base) { findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "named after the app")) }
+        for name in collector.list(preferences) {
+            let lowered = name.lowercased()
+            if lowered.hasSuffix(".plist") {
+                let base = String(name.dropLast(6))
+                if !base.contains("."), isNamed(base) { findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "named after the app")) }
+            } else if let suffix = [" settings", " prefs", " preferences"].first(where: lowered.hasSuffix), isNamed(String(name.dropLast(suffix.count))) {
+                // Adobe's shape: ~/Library/Preferences/Adobe Photoshop 2026 Settings.
+                findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "the app's settings"))
+            }
         }
         let config = roots.home.appending(path: ".config", directoryHint: .isDirectory)
         let dotNames = Set(lowerNames.flatMap { [$0, $0.replacingOccurrences(of: " ", with: ""), $0.replacingOccurrences(of: " ", with: "-")] })
@@ -333,7 +346,12 @@ public struct EvidenceFinder: Sendable {
         for name in [application.name] + application.alternateNames {
             let words = name.split(separator: " ").map(String.init)
             let kept = words.filter { $0.lowercased().replacingOccurrences(of: "-", with: "") != squeezedVendor && !squeezedVendor.hasPrefix($0.lowercased()) }
-            for candidate in [words, kept] where !candidate.isEmpty {
+            // Each also without a trailing version or year ("Adobe Photoshop 2026" → "Photoshop").
+            let unversioned = [words, kept].compactMap { list -> [String]? in
+                guard list.count > 1, let last = list.last, last.allSatisfy({ $0.isNumber || $0 == "." }) || last.count == 1 else { return nil }
+                return Array(list.dropLast())
+            }
+            for candidate in [words, kept] + unversioned where !candidate.isEmpty {
                 for joined in [candidate.joined(separator: " "), candidate.joined(separator: "-"), candidate.joined()] where joined.count >= 3 { products.insert(joined.lowercased()) }
             }
         }
@@ -396,6 +414,49 @@ public struct EvidenceFinder: Sendable {
     static func matchedIdentifier(_ item: String, identifiers: [String]) -> String? {
         let lowered = item.lowercased()
         return identifiers.filter { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + ".") }.max { $0.count < $1.count }
+    }
+
+    /// Identifiers embedded in other apps that this app embeds too, checked only in apps of the
+    /// same vendor as each embedded identifier that isn't a sub-identifier of the app's own.
+    static func sharedEmbedded(identifiers: [String], main: String?, others: [InstalledApp]) -> [(identifier: String, path: String)] {
+        let own = main?.lowercased() ?? ""
+        let foreign = identifiers.map { $0.lowercased() }.filter { $0 != own && !$0.hasPrefix(own + ".") }
+        let vendors = Set(foreign.compactMap(vendor))
+        guard !vendors.isEmpty else { return [] }
+        let lowerForeign = Set(foreign)
+        let candidates = others.filter { $0.classification != .system && $0.bundleIdentifier.flatMap(vendor).map(vendors.contains) == true }
+        var result: [(identifier: String, path: String)] = []
+        for other in candidates {
+            for item in EmbeddedBundles.find(in: URL(filePath: other.bundlePath, directoryHint: .isDirectory), mainIdentifier: other.bundleIdentifier) where lowerForeign.contains(item.identifier.lowercased()) {
+                result.append((item.identifier, other.path))
+            }
+        }
+        return result
+    }
+
+    /// Updaters several apps of one vendor share, by identifier, with the vendor prefix they serve.
+    static let sharedUpdaters: [String: String] = [
+        "com.microsoft.autoupdate2": "com.microsoft.", "com.microsoft.autoupdate.fba": "com.microsoft.",
+        "com.google.keystone": "com.google.", "com.google.googleupdater": "com.google.",
+        "com.adobe.acc.adobecreativecloud": "com.adobe.",
+    ]
+
+    /// Shared updaters that only this app still needed: no other app of their vendor remains.
+    static func orphanedUpdaters(after application: InstalledApp, others: [InstalledApp]) -> [InstalledApp] {
+        guard let own = application.bundleIdentifier?.lowercased(), sharedUpdaters[own] == nil else { return [] }
+        return others.filter { updater in
+            guard let identifier = updater.bundleIdentifier?.lowercased(), let prefix = sharedUpdaters[identifier], own.hasPrefix(prefix) else { return false }
+            return !others.contains { other in
+                guard let id = other.bundleIdentifier?.lowercased(), id.hasPrefix(prefix), sharedUpdaters[id] == nil else { return false }
+                return other.classification == .user && !other.isSteamShortcut
+            }
+        }
+    }
+
+    /// `com.microsoft` from `com.microsoft.errorreporting`.
+    static func vendor(_ identifier: String) -> String? {
+        let parts = identifier.lowercased().split(separator: ".")
+        return parts.count >= 3 ? parts.prefix(2).joined(separator: ".") : nil
     }
 
     /// The app's own app groups (from it and its embedded bundles), and which of them another

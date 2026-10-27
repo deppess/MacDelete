@@ -11,7 +11,9 @@ enum PlanNotes {
         let library = roots.home.appending(path: "Library").path + "/"
         let folders = ["Containers/", "Group Containers/", "Application Support/"]
         return findings.filter { finding in
-            finding.size >= largeSize && finding.reason != "Steam's client and data" && folders.contains { finding.path.hasPrefix(library + $0) }
+            // Data folders only: not the app itself, a Steam game, or Steam's own client.
+            finding.size >= largeSize && !["Steam's client and data", "Steam game folder"].contains(finding.reason ?? "")
+                && !finding.path.lowercased().contains("/application support/steam/") && folders.contains { finding.path.hasPrefix(library + $0) }
         }.map { "\(Format.path($0.path, home: roots.home).terminalInline) is \(Format.size($0.size)): it may hold files of your own (documents, libraries, virtual machines). Check before deleting." }
     }
 

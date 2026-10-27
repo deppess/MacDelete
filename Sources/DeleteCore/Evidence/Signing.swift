@@ -49,18 +49,33 @@ public enum EmbeddedBundles {
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
             let name = url.lastPathComponent.lowercased()
+            if name == "sharedsupport" {
+                // Not walked (Xcode's holds tens of thousands of files), but apps directly in it
+                // count: Office keeps its shared helpers there (Microsoft Error Reporting).
+                for child in (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] where child.pathExtension.lowercased() == "app" {
+                    if let item = embedded(child, seen: &seen) { found.append(item) }
+                }
+                enumerator.skipDescendants()
+                continue
+            }
             if skipped.contains(name) || name.hasSuffix(".lproj") { enumerator.skipDescendants(); continue }
-            guard bundleExtensions.contains(url.pathExtension.lowercased()) else { continue }
-            let plist = url.appending(path: "Contents/Info.plist")
-            guard let data = try? Data(contentsOf: plist), data.count <= 1_048_576,
-                  let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let identifier = (info["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  isReverseDNS(identifier), !identifier.lowercased().hasPrefix("org.sparkle-project."),
-                  seen.insert(identifier.lowercased()).inserted else { continue }
-            found.append(Embedded(identifier: identifier, path: url.path))
+            guard bundleExtensions.contains(url.pathExtension.lowercased()), let item = embedded(url, seen: &seen) else { continue }
+            found.append(item)
             if found.count >= limit { break }
         }
-        return found
+        return Array(found.prefix(limit))
+    }
+
+    private static func embedded(_ url: URL, seen: inout Set<String>) -> Embedded? {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+        let plist = url.appending(path: "Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plist), data.count <= 1_048_576,
+              let metadata = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let identifier = (metadata["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              isReverseDNS(identifier), !identifier.lowercased().hasPrefix("org.sparkle-project."),
+              seen.insert(identifier.lowercased()).inserted else { return nil }
+        return Embedded(identifier: identifier, path: url.path)
     }
 
     /// SMJobBless helper tools: plain executables in `Contents/Library/LaunchServices`, each named

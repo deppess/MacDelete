@@ -20,12 +20,15 @@ struct Ownership {
     private var claims: [String: Set<String>] = [:]
     private let targetPath: String
 
-    init(targetPath: String, targetIdentifiers: [String], otherApplications: [InstalledApp]) {
+    /// `otherEmbedded` are identifiers embedded in other installed apps (helpers several apps of a
+    /// suite each carry, like Office's `com.microsoft.errorreporting`), with the app carrying them.
+    init(targetPath: String, targetIdentifiers: [String], otherApplications: [InstalledApp], otherEmbedded: [(identifier: String, path: String)] = []) {
         self.targetPath = targetPath
         for identifier in targetIdentifiers { claims[identifier.lowercased(), default: []].insert(targetPath) }
         for application in otherApplications where application.bundlePath != targetPath {
             if let identifier = application.bundleIdentifier { claims[identifier.lowercased(), default: []].insert(application.path) }
         }
+        for (identifier, path) in otherEmbedded where path != targetPath { claims[identifier.lowercased(), default: []].insert(path) }
     }
 
     /// The owner of an item with this file name, or nil when no installed identifier names it.

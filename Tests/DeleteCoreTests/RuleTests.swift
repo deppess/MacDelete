@@ -297,4 +297,44 @@ final class RuleTests: XCTestCase {
         XCTAssertTrue(plan.notes.contains { $0.contains("in your Dock") })
         XCTAssertTrue(plan.notes.contains { $0.contains("coreaudiod") })
     }
+
+    /// Office-style suites: a helper every app embeds stays while any of them does; the shared
+    /// updater is pointed out once the last app goes.
+    func testSuiteHelpersAndUpdaters() throws {
+        let system = try FakeSystem()
+        for app in ["Microsoft Word", "Microsoft Excel"] {
+            try system.makeApp("\(app).app", metadata: ["CFBundleIdentifier": app == "Microsoft Word" ? "com.microsoft.Word" : "com.microsoft.Excel"])
+            try system.makeApp("\(app).app/Contents/SharedSupport/Microsoft Error Reporting.app", metadata: ["CFBundleIdentifier": "com.microsoft.errorreporting"])
+        }
+        // Spotlight finds it in /Library/Application Support/Microsoft/MAU2.0; the fake scan looks in Applications.
+        try system.makeApp("Microsoft AutoUpdate.app", metadata: ["CFBundleIdentifier": "com.microsoft.autoupdate2"])
+        try system.touch("Users/tester/Library/Containers/com.microsoft.errorreporting/")
+        try system.touch("Users/tester/Library/Containers/com.microsoft.Word/")
+
+        var plan = try system.plan("Microsoft Word")
+        XCTAssertTrue(plan.findings.contains { $0.path.hasSuffix("Containers/com.microsoft.Word") })
+        XCTAssertFalse(plan.findings.contains { $0.path.hasSuffix("com.microsoft.errorreporting") }, "Excel embeds it too")
+        XCTAssertTrue(plan.skipped.contains { $0.path.hasSuffix("com.microsoft.errorreporting") && $0.reason.contains("Microsoft Excel") }, "\(plan.skipped)")
+        XCTAssertFalse(plan.notes.contains { $0.contains("AutoUpdate") }, "Excel still needs the updater")
+
+        try FileManager.default.removeItem(at: system.applications.appending(path: "Microsoft Excel.app"))
+        plan = try system.plan("Microsoft Word")
+        XCTAssertTrue(plan.findings.contains { $0.path.hasSuffix("com.microsoft.errorreporting") && $0.tier == .exact }, "the last app takes the helper's data")
+        XCTAssertTrue(plan.notes.contains { $0.contains("Microsoft AutoUpdate only updates this vendor's apps") }, "\(plan.notes)")
+    }
+
+    /// Adobe's layout: product folders inside the vendor's folders, and a "<App> Settings" folder.
+    func testAdobeStyleProductFolders() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Adobe Photoshop 2026/Adobe Photoshop 2026.app", metadata: ["CFBundleIdentifier": "com.adobe.Photoshop"])
+        try system.makeApp("Adobe Illustrator 2026/Adobe Illustrator.app", metadata: ["CFBundleIdentifier": "com.adobe.illustrator"])
+        let lib = "Users/tester/Library"
+        for path in ["\(lib)/Preferences/Adobe Photoshop 2026 Settings/", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026/", "\(lib)/Caches/Adobe/Photoshop/",
+                     "\(lib)/Application Support/Adobe/Illustrator 2026/", "\(lib)/Application Support/Adobe/CoreSync/"] {
+            try system.touch(path)
+        }
+        let names = relative(try system.plan("Adobe Photoshop 2026").findings, system, tier: .name)
+        XCTAssertEqual(names, ["\(lib)/Preferences/Adobe Photoshop 2026 Settings", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026", "\(lib)/Caches/Adobe/Photoshop"], "\(names)")
+        XCTAssertTrue(Protection.isProtected(system.userLibrary.appending(path: "Application Support/Adobe").path, roots: system.roots), "never Adobe's own folder")
+    }
 }
