@@ -1,15 +1,18 @@
 import Foundation
 
-/// Which installer packages placed which application bundles, from the receipts in
-/// /var/db/receipts. Each receipt's BOM is listed once (`lsbom -s -d`, directories only), in
-/// parallel: about 0.15 s for every package on a typical Mac, against one `pkgutil --file-info`
-/// process per app.
+/// Every installer package's listing, read once: which packages placed which application
+/// bundles, and every path each package installed. Each receipt's BOM is listed once
+/// (`lsbom -s`), in parallel, while the apps are scanned (~35 ms for every package on a typical
+/// Mac); plans then look things up here instead of running `lsbom` or `pkgutil` again.
 public struct PackageReceipts: Sendable {
     /// Package identifiers by lowercased bundle path (APFS is case-insensitive by default).
     public var packagesByApplication: [String: [String]]
+    /// Every absolute path each package lists, by package identifier.
+    public var listings: [String: [String]]
 
-    public init(packagesByApplication: [String: [String]] = [:]) {
+    public init(packagesByApplication: [String: [String]] = [:], listings: [String: [String]] = [:]) {
         self.packagesByApplication = packagesByApplication
+        self.listings = listings
     }
 
     public func packages(for path: String) -> [String] {
@@ -32,30 +35,97 @@ public struct PackageReceipts: Sendable {
         let results = UnsafeResults<[String]>(count: receipts.count)
         DispatchQueue.concurrentPerform(iterations: receipts.count) { index in
             let receipt = receipts[index]
-            guard let result = try? runner.run(executable: lsbom, arguments: ["-s", "-d", receipt.bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 20, outputLimit: 64 * 1_024 * 1_024),
-                  result.status == 0 else { results[index] = []; return }
-            results[index] = applicationPaths(bomOutput: result.stdout, installPrefix: receipt.prefix)
+            results[index] = listing(bom: receipt.bom, installPrefix: receipt.prefix, runner: runner, lsbom: lsbom)
         }
         var map: [String: [String]] = [:]
+        var listings: [String: [String]] = [:]
         for (receipt, paths) in zip(receipts, results.values) {
-            for path in paths where !(map[path.lowercased()]?.contains(receipt.identifier) ?? false) {
+            listings[receipt.identifier] = paths
+            for path in applicationPaths(paths) where !(map[path.lowercased()]?.contains(receipt.identifier) ?? false) {
                 map[path.lowercased(), default: []].append(receipt.identifier)
             }
         }
-        return PackageReceipts(packagesByApplication: map)
+        return PackageReceipts(packagesByApplication: map, listings: listings)
     }
 
-    /// Top-level `.app` directories in a BOM listing. Listed paths are relative to the receipt's
-    /// install prefix, which is usually "/" but may itself be the bundle
-    /// (`Applications/FL Cloud Plugins.app`, listed as ".").
-    static func applicationPaths(bomOutput: Data, installPrefix: String) -> [String] {
-        let base = URL(filePath: "/" + installPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")), directoryHint: .isDirectory)
-        return String(decoding: bomOutput, as: UTF8.self).split(separator: "\n").compactMap { line in
-            var relative = String(line)
-            if relative == "." { relative = "" } else if relative.hasPrefix("./") { relative = String(relative.dropFirst(2)) }
-            let url = (relative.isEmpty ? base : base.appending(path: relative)).standardizedFileURL
-            guard url.pathExtension.lowercased() == "app", !url.deletingLastPathComponent().pathComponents.contains(where: { ["app", "framework", "bundle", "xpc", "appex", "plugin", "kext"].contains(URL(filePath: $0).pathExtension.lowercased()) }) else { return nil }
-            return url.path
+    /// The absolute paths a BOM lists, or none when it can't be read.
+    static func listing(bom: URL, installPrefix: String, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> [String] {
+        guard let result = try? runner.run(executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024),
+              result.status == 0 else { return [] }
+        return paths(bomOutput: result.stdout, installPrefix: installPrefix, excludingInside: excluded)
+    }
+
+    /// Absolute paths from `lsbom -s` output, resolved against the receipt's install prefix,
+    /// which is usually "/" but may itself be the bundle (`Applications/FL Cloud Plugins.app`,
+    /// listed as "."). Lines inside `excluded` are dropped by comparing bytes, before any string
+    /// is built (Xcode's receipt lists 166,000 paths inside its bundle).
+    static func paths(bomOutput: Data, installPrefix: String, excludingInside excluded: String? = nil) -> [String] {
+        let trimmedPrefix = installPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let base = trimmedPrefix.isEmpty ? "" : "/" + trimmedPrefix
+        // BOM lines are relative ("./Applications/Xcode.app/…"), so compare against that form.
+        var excludedLine: [UInt8]?
+        if let excluded {
+            let relative = base.isEmpty ? excluded : (excluded.hasPrefix(base + "/") ? String(excluded.dropFirst(base.count)) : nil)
+            excludedLine = relative.map { Array(("." + $0 + "/").utf8) }
         }
+        // Byte work per line, one string per path: a receipt can list tens of thousands.
+        let baseBytes = Array(base.utf8)
+        var paths: [String] = []
+        var buffer: [UInt8] = []
+        bomOutput.withUnsafeBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var start = 0
+            for index in 0...bytes.count where index == bytes.count || bytes[index] == 0x0A {
+                defer { start = index + 1 }
+                guard index > start else { continue }
+                let line = UnsafeBufferPointer(rebasing: bytes[start..<index])
+                if let excludedLine, line.count >= excludedLine.count, line.starts(with: excludedLine) { continue }
+                // "." is the prefix itself; "./x" is x; trailing slashes go.
+                var from = line.startIndex, to = line.endIndex
+                if line.count == 1, line[from] == 0x2E { from = to } else if line.count >= 2, line[from] == 0x2E, line[from + 1] == 0x2F { from += 2 }
+                while to > from, line[to - 1] == 0x2F { to -= 1 }
+                let relative = UnsafeBufferPointer(rebasing: line[from..<to])
+                if hasDotComponent(relative) { continue }
+                buffer.removeAll(keepingCapacity: true)
+                buffer += baseBytes
+                if relative.isEmpty {
+                    if baseBytes.isEmpty { buffer.append(0x2F) }
+                } else {
+                    buffer.append(0x2F)
+                    buffer += relative
+                }
+                paths.append(String(decoding: buffer, as: UTF8.self))
+            }
+        }
+        return paths
+    }
+
+    /// Whether a relative path has a "." or ".." component, which no listing should.
+    private static func hasDotComponent(_ path: UnsafeBufferPointer<UInt8>) -> Bool {
+        var componentStart = path.startIndex
+        for index in path.startIndex...path.endIndex where index == path.endIndex || path[index] == 0x2F {
+            let length = index - componentStart
+            if (length == 1 && path[componentStart] == 0x2E) || (length == 2 && path[componentStart] == 0x2E && path[componentStart + 1] == 0x2E) { return true }
+            componentStart = index + 1
+        }
+        return false
+    }
+
+    /// Top-level `.app` bundles among a listing's paths (not helpers inside another bundle).
+    static func applicationPaths(_ paths: [String]) -> [String] {
+        paths.filter { path in
+            // Only a path ending in ".app" is split into components.
+            guard path.utf8.count > 4, path.utf8.suffix(4).map({ $0 | 0x20 }) == Array(".app".utf8) else { return false }
+            let components = path.split(separator: "/")
+            guard let last = components.last, last.lowercased().hasSuffix(".app") else { return false }
+            return !components.dropLast().contains { component in
+                let lowered = component.lowercased()
+                return ["app", "framework", "bundle", "xpc", "appex", "plugin", "kext"].contains { lowered.hasSuffix("." + $0) }
+            }
+        }
+    }
+
+    static func applicationPaths(bomOutput: Data, installPrefix: String) -> [String] {
+        applicationPaths(paths(bomOutput: bomOutput, installPrefix: installPrefix))
     }
 }

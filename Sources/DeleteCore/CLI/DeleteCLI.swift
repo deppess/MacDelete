@@ -148,7 +148,6 @@ public enum DeleteCLI {
             return EXIT_FAILURE
         }
         timing?.mark("find leftovers")
-        let name = application.name.terminalInline
         func elevates(_ plans: [RemovalPlan]) -> Bool {
             sandbox == nil && !isRoot && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) }
         }

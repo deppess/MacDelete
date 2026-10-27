@@ -185,8 +185,13 @@ enum CatalogScanner {
     /// Inside the payload, a quote preceded by n backslashes is: the payload's end (n even), a
     /// quote of the inner JSON (n = 1, 5, …, `\"` or `\\\\\"`), or an escaped quote inside an
     /// inner string (n = 3, 7, …, `\\\"`).
+    ///
+    /// The formulae (half the payload) are skipped: the walk starts at the top-level "casks" key
+    /// (`},\"casks\":{`, the previous top-level value closing before it) when it's found, and
+    /// stops after the cask holding the needles' last mention.
     static func casks(in data: Data, mentioning needles: [String]) -> [(token: String, cask: [String: Any])]? {
         let marker = Array("\"payload\":\"".utf8)
+        let casksStart = Array("},\\\"casks\\\":{".utf8)
         let needleBytes = needles.map { Array($0.utf8) }
         let casksKey = Array("casks".utf8)
         return data.withUnsafeBytes { raw -> [(String, [String: Any])]? in
@@ -204,6 +209,17 @@ enum CatalogScanner {
             var inCasks = false, caskStart = 0, caskToken = 0..<0
             var sawCasks = false
             var index = start + marker.count
+            // Data.range, not memmem: memmem is slow on a pattern starting with a byte as common
+            // as "}" (~6 ms over the formulae, against ~1 ms).
+            if let jump = data.range(of: Data(casksStart), in: index..<data.count) {
+                (index, depth) = (jump.lowerBound + 1, 1)
+            }
+            // Where the needles are last mentioned; nothing after that cask matters.
+            var lastMention = -1
+            for needle in needleBytes {
+                if let found = data.range(of: Data(needle), options: .backwards, in: index..<data.count) { lastMention = max(lastMention, found.lowerBound) }
+            }
+            guard lastMention >= 0 else { return [] }
             while index < bytes.count {
                 let byte = bytes[index]
                 if byte == 0x22 {
@@ -242,6 +258,7 @@ enum CatalogScanner {
                         }
                     }
                     if inCasks, depth == 2 { inCasks = false }
+                    if inCasks, depth == 3, index > lastMention { return result }
                     depth -= 1
                 }
                 index += 1

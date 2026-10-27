@@ -276,7 +276,7 @@ final class PackageTests: XCTestCase {
         case "$*" in
         *-d*) exit 0 ;;
         *suite*) printf '.\\n./Applications\\n./Applications/Suite.app\\n./Applications/Suite.app/Contents\\n./Library\\n./Library/Application Support\\n./Library/Application Support/Vendor Suite\\n./Library/Application Support/Vendor Suite/data\\n' ;;
-        *extras*) printf '.\\n./Applications\\n./Applications/Companion.app\\n' ;;
+        *extras*) printf '.\\n./Applications\\n./Applications/Suite.app\\n./Applications/Suite.app/Contents/PlugIns\\n./Applications/Companion.app\\n' ;;
         esac
         """, to: system.tools.appending(path: "lsbom"), executable: true)
 
@@ -306,6 +306,17 @@ final class PackageTests: XCTestCase {
 }
 
 final class HomebrewZapTests: XCTestCase {
+    /// In Homebrew's order (formulae, then casks), the walk starts at "casks": a formula that
+    /// mentions the app is never taken for a cask, and casks after the last mention are skipped.
+    func testCatalogWalkStartsAtCasksAndStopsAfterTheLastMention() throws {
+        let payload = #"{"formulae":{"tool":{"desc":"opens Example.app","x":{"y":1}}},"casks":{"aaa":{"raw_artifacts":[[":app",["Other.app"]]]},"example":{"raw_artifacts":[[":app",["Example.app"]]],"desc":"a \"quoted\" } brace"},"zzz":{"raw_artifacts":[[":app",["Z.app"]]]}},"cask_renames":{}}"#
+        let file = try JSONSerialization.data(withJSONObject: ["payload": payload, "signatures": []])
+        let found = try XCTUnwrap(CatalogScanner.casks(in: file, mentioning: ["Example.app"]))
+        XCTAssertEqual(found.map(\.token), ["example"])
+        XCTAssertEqual(found.first?.cask["desc"] as? String, "a \"quoted\" } brace")
+        XCTAssertEqual(CatalogScanner.casks(in: file, mentioning: ["Missing.app"])?.count, 0)
+    }
+
     func testCatalogScannerReadsOnlyMatchingCasks() throws {
         let casks: [String: Any] = [
             "example": ["raw_artifacts": [[":app", ["Example.app"]], [":zap", [":trash": ["~/Library/Example", "~/Library/Caches/{a,b}"]]], [":uninstall", [":quit": "com.example.app"]]]],

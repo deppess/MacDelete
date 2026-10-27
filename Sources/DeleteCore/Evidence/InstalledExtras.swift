@@ -16,9 +16,8 @@ enum CommandLinks {
         let bundle = String(cString: real) + "/"
         free(real)
         var seen = Set<String>()
-        var links: [String] = []
-        for folder in folders(roots: roots) where seen.insert(folder.standardizedFileURL.path).inserted {
-            links += collector.list(folder).map { folder.appending(path: $0).path }
+        let links = folders(roots: roots).filter { seen.insert($0.standardizedFileURL.path).inserted }.flatMap { folder in
+            collector.list(folder).map { folder.appending(path: $0).path }
         }
         // Resolved in parallel: Homebrew's bin alone holds hundreds of links.
         let matches = UnsafeResults<Bool>(count: links.count)

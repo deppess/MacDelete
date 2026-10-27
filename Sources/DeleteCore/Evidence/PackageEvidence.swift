@@ -17,35 +17,33 @@ enum PackageEvidence {
         var skipped: [Skipped] = []
     }
 
-    /// `known` are the packages the inventory's receipt map gives the bundle. The map holds every
-    /// package but Apple's, including those `pkgutil --file-info` misses (any not installed at
-    /// "/"), so `pkgutil` (~25 ms) is asked only for Apple's apps (Xcode's App Store receipt), or
-    /// when `receiptsRead` is false.
-    static func scan(application: InstalledApp, known: [String], receiptsRead: Bool, roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
-        let (pkgutil, lsbom) = (roots.tools.pkgutil, roots.tools.lsbom)
-        var packages = known
-        if !receiptsRead || application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") == true {
-            for package in packagesInstalling(application.bundlePath, runner: runner, pkgutil: pkgutil) where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) {
+    /// The packages are those the inventory's receipts give the bundle (every package but
+    /// Apple's, including those `pkgutil --file-info` misses: any not installed at "/").
+    /// `pkgutil` (~25 ms) is asked only for Apple's apps (Xcode's App Store receipt), or when no
+    /// receipt could be read.
+    static func scan(application: InstalledApp, receipts: PackageReceipts, roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
+        var packages = receipts.packages(for: application.path)
+        if receipts.listings.isEmpty || application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") == true {
+            for package in packagesInstalling(application.bundlePath, runner: runner, pkgutil: roots.tools.pkgutil) where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) {
                 packages.append(package)
             }
         }
         guard !packages.isEmpty else { return Result() }
         var result = Result()
 
-        // Folders every other package lists, to find the ones this app's packages share.
-        let receiptNames = ((try? FileManager.default.contentsOfDirectory(atPath: roots.receipts.path)) ?? []).filter { $0.hasSuffix(".plist") }
-        let ownNames = Set(packages.map { "\($0).plist".lowercased() })
-        let others = receiptNames.filter { !ownNames.contains($0.lowercased()) && !$0.lowercased().hasPrefix("com.apple.") }
-        let otherListings = UnsafeResults<[String]>(count: others.count)
-        DispatchQueue.concurrentPerform(iterations: others.count) { index in
-            otherListings[index] = listing(receipt: roots.receipts.appending(path: others[index]), directoriesOnly: true, runner: runner, lsbom: lsbom)
+        // Paths every other package lists, to find the folders this app's packages share.
+        let own = Set(packages.map { $0.lowercased() })
+        var sharedFolders = Set<String>()
+        for (package, paths) in receipts.listings where !own.contains(package.lowercased()) {
+            for path in paths { sharedFolders.insert(path.lowercased()) }
         }
-        let sharedFolders = Set(otherListings.values.flatMap { $0 }.map { $0.lowercased() })
 
+        let bundle = application.bundlePath.lowercased() + "/"
         for package in packages {
             // Entries inside the app's bundle are covered by deleting the bundle (Xcode's
-            // receipt lists 166,000 of them).
-            let paths = listing(receipt: roots.receipts.appending(path: "\(package).plist"), directoriesOnly: false, runner: runner, lsbom: lsbom, excludingInside: application.bundlePath)
+            // receipt lists 166,000 of them). Apple's receipts aren't in the index.
+            let paths = receipts.listings[package].map { $0.filter { !$0.lowercased().hasPrefix(bundle) } }
+                ?? listing(receipt: roots.receipts.appending(path: "\(package).plist"), runner: runner, lsbom: roots.tools.lsbom, excludingInside: application.bundlePath)
             let items = ownedItems(paths, sharedFolders: sharedFolders, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
             // A package that also installed another app still on the Mac (a suite like DaVinci
             // Resolve's) owns its files together with that app: none of them, and not its
@@ -99,47 +97,22 @@ enum PackageEvidence {
         return owned.sorted()
     }
 
-    /// Packages that installed any of these items. Only items outside the home folder are
-    /// looked up (packages don't install into it), and not the app, already looked up.
-    static func packagesInstalling(items findings: [Finding], application: InstalledApp, roots: Roots, runner: CommandRunner) -> (looked: Set<String>, packages: [String]) {
+    /// Other packages whose every item is being deleted (one that installed only the app's
+    /// launch daemon): their receipts are forgotten too. Only items outside the home and
+    /// per-user temporary folders can be a package's (packages don't install into them).
+    static func coveredPackages(findings: [Finding], application: InstalledApp, excluding: [String], receipts: PackageReceipts, roots: Roots) -> [String] {
+        let skipped = ([roots.home] + [roots.userCache, roots.userTemp, roots.codeSigningClones].compactMap { $0 }).map { $0.standardizedFileURL.path.lowercased() + "/" }
         let bundles = Set([application.path, application.bundlePath].map { $0.lowercased() })
-        let home = roots.home.standardizedFileURL.path.lowercased() + "/"
-        let temporary = [roots.userCache, roots.userTemp, roots.codeSigningClones].compactMap { $0?.standardizedFileURL.path.lowercased() }.map { $0 + "/" }
-        let candidates = findings.filter { finding in
-            let lowered = finding.path.lowercased()
-            return finding.tier == .exact && !bundles.contains(lowered) && !lowered.hasPrefix(home) && !temporary.contains { lowered.hasPrefix($0) } && !(finding.reason?.hasPrefix("installed by package") ?? false)
-        }.map(\.path)
-        guard !candidates.isEmpty else { return ([], []) }
-        let lookups = UnsafeResults<[String]>(count: candidates.count)
-        DispatchQueue.concurrentPerform(iterations: candidates.count) { index in
-            lookups[index] = packagesInstalling(candidates[index], runner: runner, pkgutil: roots.tools.pkgutil)
-        }
-        // `pkgutil --file-info` only knows packages installed at "/"; one installed into a folder
-        // (`Library/LaunchDaemons`) is found by its install location holding a candidate.
-        let lowerCandidates = candidates.map { $0.lowercased() }
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: roots.receipts.path)) ?? []).filter { $0.hasSuffix(".plist") && !$0.lowercased().hasPrefix("com.apple.") }
-        let byLocation: [String] = names.compactMap { name in
-            guard let info = SmallFile.plist(atPath: roots.receipts.appending(path: name).path),
-                  let prefix = (info["InstallPrefixPath"] as? String)?.trimmingCharacters(in: CharacterSet(charactersIn: "/")), !prefix.isEmpty else { return nil }
-            let location = "/" + prefix.lowercased()
-            guard lowerCandidates.contains(where: { $0 == location || $0.hasPrefix(location + "/") }) else { return nil }
-            return (info["PackageIdentifier"] as? String) ?? String(name.dropLast(".plist".count))
-        }
-        return (Set(lowerCandidates), EvidenceFinder.distinct(lookups.values.flatMap { $0 } + byLocation))
-    }
-
-    /// Of these packages, the ones whose every item is being deleted (one that installed only the
-    /// app's launch daemon): their receipts are forgotten too.
-    static func coveredPackages(_ packages: [String], findings: [Finding], excluding: [String], roots: Roots, runner: CommandRunner) -> [String] {
-        let excluded = Set(excluding.map { $0.lowercased() })
         let deleted = findings.filter { $0.tier == .exact }.map { $0.path.lowercased() }
+        let candidates = Set(deleted.filter { path in !bundles.contains(path) && !skipped.contains { path.hasPrefix($0) } })
+        guard !candidates.isEmpty else { return [] }
         func isDeleted(_ path: String) -> Bool {
             let lowered = path.lowercased()
             return deleted.contains { lowered == $0 || lowered.hasPrefix($0 + "/") }
         }
-        return EvidenceFinder.distinct(packages).filter { package in
-            guard !excluded.contains(package.lowercased()), !package.lowercased().hasPrefix("com.apple.") else { return false }
-            let paths = listing(receipt: roots.receipts.appending(path: "\(package).plist"), directoriesOnly: false, runner: runner, lsbom: roots.tools.lsbom)
+        let excluded = Set(excluding.map { $0.lowercased() })
+        return receipts.listings.keys.sorted().filter { package in
+            guard !excluded.contains(package.lowercased()), let paths = receipts.listings[package], paths.contains(where: { candidates.contains($0.lowercased()) }) else { return false }
             let items = ownedItems(paths, sharedFolders: [], root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
             return !items.isEmpty && items.allSatisfy(isDeleted)
         }
@@ -158,40 +131,12 @@ enum PackageEvidence {
         return packages
     }
 
-    /// Absolute paths listed in a receipt's BOM, resolved against its install prefix.
-    static func listing(receipt plist: URL, directoriesOnly: Bool, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> [String] {
+    /// Absolute paths listed in a receipt that isn't in the index (Apple's).
+    static func listing(receipt plist: URL, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> [String] {
         let bom = plist.deletingPathExtension().appendingPathExtension("bom")
         guard FileManager.default.fileExists(atPath: bom.path) else { return [] }
-        var prefix = "/"
-        if let value = SmallFile.plist(atPath: plist.path)?["InstallPrefixPath"] as? String { prefix = value }
-        let trimmedPrefix = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let base = trimmedPrefix.isEmpty ? "" : "/" + trimmedPrefix
-        guard let result = try? runner.run(executable: lsbom, arguments: ["-s"] + (directoriesOnly ? ["-d"] : []) + [bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024),
-              result.status == 0 else { return [] }
-        // Lines inside `excluded` are dropped by comparing bytes, before any string is built:
-        // BOM lines are relative ("./Applications/Xcode.app/…"), so compare against that form.
-        var excludedLine: [UInt8]?
-        if let excluded {
-            let relative = base.isEmpty ? excluded : (excluded.hasPrefix(base + "/") ? String(excluded.dropFirst(base.count)) : nil)
-            excludedLine = relative.map { Array(("." + $0 + "/").utf8) }
-        }
-        var paths: [String] = []
-        result.stdout.withUnsafeBytes { raw in
-            let bytes = raw.bindMemory(to: UInt8.self)
-            var start = 0
-            for index in 0...bytes.count where index == bytes.count || bytes[index] == 0x0A {
-                defer { start = index + 1 }
-                guard index > start else { continue }
-                let line = UnsafeBufferPointer(rebasing: bytes[start..<index])
-                if let excludedLine, line.count >= excludedLine.count, line.starts(with: excludedLine) { continue }
-                var relative = Substring(String(decoding: line, as: UTF8.self))
-                if relative == "." { relative = "" } else if relative.hasPrefix("./") { relative = relative.dropFirst(2) }
-                while relative.hasSuffix("/") { relative = relative.dropLast() }
-                guard !relative.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { continue }
-                paths.append(relative.isEmpty ? (base.isEmpty ? "/" : base) : base + "/" + relative)
-            }
-        }
-        return paths
+        let prefix = SmallFile.plist(atPath: plist.path)?["InstallPrefixPath"] as? String ?? "/"
+        return PackageReceipts.listing(bom: bom, installPrefix: prefix, runner: runner, lsbom: lsbom, excludingInside: excluded)
     }
 
     private static func isSymbolicLink(_ path: String) -> Bool {

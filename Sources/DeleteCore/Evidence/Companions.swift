@@ -107,7 +107,7 @@ public enum Companions {
         }
 
         // An installer the app's packages put on disk, named after another app.
-        let installers = ownPackages.flatMap { installerNames(receipt: roots.receipts.appending(path: "\($0).plist"), runner: runner, lsbom: roots.tools.lsbom) }
+        let installers = ownPackages.flatMap { installerNames(inventory.receipts.listings[$0] ?? []) }
         for other in sameTeam where other.classification == .user {
             let name = normalized(other.name)
             if name.count >= 4, installers.contains(where: { $0.hasPrefix(name) }) { reasons.append((other, "its installer ships with \(application.name)")) }
@@ -175,22 +175,13 @@ public enum Companions {
         return nil
     }
 
-    /// Normalized names of the `.pkg` installers a receipt lists ("FL Cloud Plugins
-    /// Installer.pkg" → "flcloudpluginsinstaller"). The listing is scanned as bytes: a receipt can
-    /// list tens of thousands of files.
-    static func installerNames(receipt plist: URL, runner: CommandRunner, lsbom: URL) -> [String] {
-        let bom = plist.deletingPathExtension().appendingPathExtension("bom")
-        guard FileManager.default.fileExists(atPath: bom.path),
-              let result = try? runner.run(executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024),
-              result.status == 0 else { return [] }
-        var names: [String] = []
-        for line in result.stdout.split(separator: 0x0A) where line.count > 4 {
-            let suffix = line.suffix(4).map { $0 | 0x20 }
-            guard suffix == Array(".pkg".utf8) else { continue }
-            let file = String(decoding: line, as: UTF8.self).split(separator: "/").last.map(String.init) ?? ""
-            names.append(normalized(String(file.dropLast(4))))
+    /// Normalized names of the `.pkg` installers a listing holds ("FL Cloud Plugins
+    /// Installer.pkg" → "flcloudpluginsinstaller").
+    static func installerNames(_ paths: [String]) -> [String] {
+        paths.compactMap { path in
+            let name = URL(filePath: path).lastPathComponent
+            return name.lowercased().hasSuffix(".pkg") ? normalized(String(name.dropLast(4))) : nil
         }
-        return names
     }
 
     /// Lowercased letters and digits only.

@@ -30,10 +30,10 @@ public enum RunningApps {
         let prefix = bundlePath.lowercased() + "/"
         var pids = [pid_t](repeating: 0, count: Int(max(proc_listallpids(nil, 0), 0)) + 64)
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
-        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        var path = [UInt8](repeating: 0, count: Int(MAXPATHLEN) * 4)
         return pids.prefix(max(count, 0)).filter { pid in
-            guard pid > 0, proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
-            return String(cString: path).lowercased().hasPrefix(prefix)
+            let length = pid > 0 ? Int(proc_pidpath(pid, &path, UInt32(path.count))) : 0
+            return length > 0 && String(decoding: path.prefix(length), as: UTF8.self).lowercased().hasPrefix(prefix)
         }
     }
 

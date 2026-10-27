@@ -6,7 +6,7 @@ import Foundation
 struct Collector {
     let roots: Roots
     private var listings: [String: [String]] = [:]
-    private(set) var findings: [Finding] = []
+    private var findings: [Finding] = []
     private var exempt = Set<String>()
     private var checkedForOtherApps = Set<String>()
     private(set) var skipped: [Skipped] = []

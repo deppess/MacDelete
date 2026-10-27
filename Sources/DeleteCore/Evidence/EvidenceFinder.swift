@@ -50,8 +50,7 @@ public struct EvidenceFinder: Sendable {
         let runner = self.runner
         let roots = self.roots
         let otherPaths = Set(others.flatMap { [$0.path, $0.bundlePath] })
-        let knownPackages = inventory.receipts.packages(for: application.bundlePath)
-        let packagesTask = Concurrent { PackageEvidence.scan(application: application, known: knownPackages, receiptsRead: !inventory.receipts.packagesByApplication.isEmpty, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
+        let packagesTask = Concurrent { PackageEvidence.scan(application: application, receipts: inventory.receipts, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
         let groupsTask = Concurrent { Self.applicationGroups(bundle: bundle, embedded: embedded, others: others) }
         let catalogTask: Concurrent<(token: String, paths: [String])?>? = {
             if case .homebrew(_, true) = application.source { return nil }
@@ -137,10 +136,6 @@ public struct EvidenceFinder: Sendable {
         let plugins = PluginBundles.scan(application: application, ownership: ownership, roots: roots, collector: &collector)
         plugins.findings.forEach { collector.add($0) }
         plugins.skipped.forEach { collector.skip($0.path, $0.reason) }
-        // Packages that installed anything found so far (only the app's launch daemon, say),
-        // looked up while the app's own packages are.
-        let foundSoFar = collector.findings
-        let installedBy = Concurrent { PackageEvidence.packagesInstalling(items: foundSoFar, application: application, roots: roots, runner: runner) }
 
         // Browser native-messaging manifests that run a program inside the app.
         for finding in NativeMessaging.findings(bundlePath: application.bundlePath, roots: roots, collector: &collector) { collector.add(finding) }
@@ -186,10 +181,8 @@ public struct EvidenceFinder: Sendable {
         // A folder removed only once empty is never deleted whole, not even as a name match.
         let lowerEmpty = Set(emptyFolders.map { $0.lowercased() })
         findings.removeAll { lowerEmpty.contains($0.path.lowercased()) }
-        // Other receipts the plan empties (items found after the early lookup are looked up now).
-        let early = installedBy.value
-        let late = PackageEvidence.packagesInstalling(items: findings.filter { !early.looked.contains($0.path.lowercased()) }, application: application, roots: roots, runner: runner)
-        let coveredPackages = PackageEvidence.coveredPackages(early.packages + late.packages, findings: findings, excluding: packages.packages + packages.kept, roots: roots, runner: runner)
+        // Other receipts the plan empties.
+        let coveredPackages = PackageEvidence.coveredPackages(findings: findings, application: application, excluding: packages.packages + packages.kept, receipts: inventory.receipts, roots: roots)
         timing?.mark("  covered packages")
         Self.measure(&findings, knownBundle: application.size.map { (application.bundlePath, $0) })
         timing?.mark("  sizes")
