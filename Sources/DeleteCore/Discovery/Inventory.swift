@@ -65,7 +65,7 @@ public struct Inventory: Sendable {
             return .homebrew(token: cask.token, declared: false)
         }
         if application.hasAppStoreReceipt { return .appStore }
-        if application.isSteamShortcut || application.path.contains("/steamapps/common/") { return .steam }
+        if application.isSteamShortcut || application.path.range(of: "/steamapps/common/", options: .caseInsensitive) != nil { return .steam }
         if application.path.hasPrefix("/Applications/Setapp/") { return .setapp }
         if application.path.hasPrefix("/Applications/MacPorts/") { return .macPorts }
         if !packages.isEmpty { return .installerPackage(identifiers: packages) }

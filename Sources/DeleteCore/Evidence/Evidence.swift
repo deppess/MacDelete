@@ -19,6 +19,8 @@ public struct Finding: Sendable, Equatable {
     public var sizeComplete = true
     /// Owned by another user (root) or inside a folder this user can't change.
     public var needsRoot = false
+    /// A symbolic link (a command-line link): removing it removes only the link.
+    public var isLink = false
 
     public init(path: String, tier: EvidenceTier, reason: String? = nil) {
         self.path = path

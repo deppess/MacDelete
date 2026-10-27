@@ -156,7 +156,9 @@ public struct EvidenceFinder: Sendable {
         var steamLaunchItems: [LaunchItem] = []
         if application.bundleIdentifier?.lowercased() == "com.valvesoftware.steam" {
             let client = SteamGame.client(roots: roots, others: others, collector: &collector)
-            client.findings.forEach { collector.add($0, exempt: true) }
+            // Exempt from the protected-folder rule (they're inside Steam's folder), never from
+            // the rule that another installed app's files stay.
+            client.findings.forEach { collector.add($0, exempt: true, keepOtherAppsCheck: true) }
             client.skipped.forEach { collector.skip($0.path, $0.reason) }
             steamFolders = client.emptyFolders
             steamLaunchItems = client.launchItems
@@ -514,6 +516,8 @@ public struct EvidenceFinder: Sendable {
         }
         for (index, result) in results.values.enumerated() {
             (findings[index].size, findings[index].sizeComplete, findings[index].needsRoot) = result
+            var info = stat()
+            findings[index].isLink = lstat(findings[index].path, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
         }
     }
 
@@ -530,6 +534,7 @@ struct Collector {
     private var listings: [String: [String]] = [:]
     private var findings: [Finding] = []
     private var exempt = Set<String>()
+    private var checkedForOtherApps = Set<String>()
     private(set) var skipped: [Skipped] = []
     var unreadable: [String] = []
 
@@ -552,11 +557,12 @@ struct Collector {
 
     /// `exempt` findings (the app itself, a Steam game's folder) were chosen by the user or
     /// verified separately, so the protected-folder rules don't apply to them.
-    mutating func add(_ finding: Finding, exempt isExempt: Bool = false) {
+    mutating func add(_ finding: Finding, exempt isExempt: Bool = false, keepOtherAppsCheck: Bool = false) {
         let path = URL(filePath: finding.path).standardizedFileURL.path
         var finding = finding
         finding.path = path
         if isExempt { exempt.insert(path.lowercased()) }
+        if keepOtherAppsCheck { checkedForOtherApps.insert(path.lowercased()) }
         if let index = findings.firstIndex(where: { $0.path.lowercased() == path.lowercased() }) {
             if findings[index].tier == .name, finding.tier == .exact { findings[index] = finding }
             return
@@ -582,7 +588,7 @@ struct Collector {
                 skip(finding.path, Protection.protectedReason(finding.path, roots: roots))
                 continue
             }
-            if !isExempt, lowerOthers.contains(where: { $0 == lowered || $0.hasPrefix(lowered + "/") || lowered.hasPrefix($0 + "/") }) {
+            if !isExempt || checkedForOtherApps.contains(lowered), lowerOthers.contains(where: { $0 == lowered || $0.hasPrefix(lowered + "/") || lowered.hasPrefix($0 + "/") }) {
                 skip(finding.path, "belongs to another installed app")
                 continue
             }

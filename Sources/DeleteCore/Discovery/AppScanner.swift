@@ -247,7 +247,7 @@ public struct AppScanner: Sendable {
         if path.hasPrefix("/System/") || path.hasPrefix("/Library/Apple/") || path.hasPrefix("/Library/CoreServices/") { return .system }
         let home = home.hasSuffix("/") ? String(home.dropLast()) : home
         if path.hasPrefix("/Applications/") || path.hasPrefix(home + "/Applications/") { return .user }
-        if path.contains("/steamapps/common/") { return .user }
+        if path.range(of: "/steamapps/common/", options: .caseInsensitive) != nil { return .user }
         // An external drive's own Applications folder (/Volumes/X/Applications/App.app).
         let parts = path.split(separator: "/")
         if parts.count >= 4, parts[0] == "Volumes", parts[2] == "Applications" { return .user }

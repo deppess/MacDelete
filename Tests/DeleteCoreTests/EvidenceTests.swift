@@ -337,7 +337,7 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Other Product/data").path), "another product's data stays")
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Example").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Lonely").path), "emptied by the zap list, so it goes")
-        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("if nothing is left in them"))
+        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("removes 3 folders once they're empty"))
     }
 
     func testRemoveIfEmptyLeavesContentsLinksAndStandardFolders() throws {
@@ -455,6 +455,24 @@ final class SteamAndAppleTests: XCTestCase {
                 XCTAssertFalse(FileManager.default.fileExists(atPath: folder), "nothing of Steam's is left")
             }
         }
+    }
+
+    /// Older Steam installs spell it "SteamApps": its games must stay all the same.
+    func testSteamItselfWithAnOldStyleSteamAppsFolder() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Steam.app", metadata: ["CFBundleIdentifier": "com.valvesoftware.steam"])
+        let steam = "Users/tester/Library/Application Support/Steam"
+        try system.touch("\(steam)/Steam.AppBundle/x")
+        try system.makeApp("Game.app", in: system.root.appending(path: "\(steam)/SteamApps/common/Game"), metadata: ["CFBundleIdentifier": "com.studio.game"])
+        try system.write("\"AppState\"\n{\n\t\"appid\"\t\t\"42\"\n\t\"installdir\"\t\t\"Game\"\n}\n", to: system.root.appending(path: "\(steam)/SteamApps/appmanifest_42.acf"))
+        try system.touch("\(steam)/SteamApps/shadercache/x")
+
+        let plan = try system.plan("Steam")
+        let selected = plan.selected(includeNameMatches: true).map { $0.path.replacingOccurrences(of: system.root.path + "/", with: "") }
+        XCTAssertFalse(selected.contains { $0.hasSuffix("/SteamApps") || $0.contains("SteamApps/common") || $0.hasSuffix("appmanifest_42.acf") }, "\(selected)")
+        XCTAssertTrue(selected.contains("\(steam)/SteamApps/shadercache"))
+        XCTAssertTrue(selected.contains("\(steam)/Steam.AppBundle"))
+        XCTAssertTrue(plan.skipped.contains { $0.path.hasSuffix("SteamApps/common/Game") })
     }
 
     func testXcodeBuildDataIsKeptWhileAnotherXcodeRemains() throws {

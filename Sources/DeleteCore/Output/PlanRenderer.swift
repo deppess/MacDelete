@@ -44,7 +44,11 @@ public enum PlanRenderer {
         var also: [String] = []
         if let cask = plan.homebrewCask { also.append("Homebrew uninstalls the cask (brew uninstall --cask \(cask))") }
         if !plan.launchItems.isEmpty { also.append("stops \(count(plan.launchItems.count, "launch item")) first") }
-        if !plan.emptyFolders.isEmpty { also.append("removes \(plan.emptyFolders.map { display($0, home: home) }.joined(separator: ", ")) if nothing is left in \(plan.emptyFolders.count == 1 ? "it" : "them")") }
+        if plan.emptyFolders.count == 1 {
+            also.append("removes \(display(plan.emptyFolders[0], home: home)) if nothing is left in it")
+        } else if plan.emptyFolders.count > 1 {
+            also.append("removes \(count(plan.emptyFolders.count, "folder")) once they're empty (\(plan.emptyFolders.map { display($0, home: home) }.min { $0.count < $1.count } ?? "")…)")
+        }
         if !plan.packages.isEmpty { also.append("forgets the installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", "))\(isRoot ? "" : " (needs sudo)")") }
         if !plan.identifiers.isEmpty { also.append("resets its privacy permissions") }
         if !also.isEmpty { lines += ["", "  Also: " + also.joined(separator: "; ") + "."] }
@@ -113,6 +117,6 @@ public enum PlanRenderer {
     }
 
     private static func display(_ path: String, home: URL) -> String { Format.path(path, home: home).terminalInline }
-    private static func size(_ finding: Finding) -> String { Format.size(finding.size) + (finding.sizeComplete ? "" : "+") }
+    private static func size(_ finding: Finding) -> String { finding.isLink ? "link" : Format.size(finding.size) + (finding.sizeComplete ? "" : "+") }
     private static func count(_ number: Int, _ noun: String) -> String { "\(number) \(noun)\(number == 1 ? "" : "s")" }
 }

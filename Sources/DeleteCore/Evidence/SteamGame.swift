@@ -28,9 +28,9 @@ enum SteamGame {
             guard let appID = shortcutAppID(application) else { return nil }
             // The game's own bundle tells which library it's in.
             var libraries = [home.appending(path: "Library/Application Support/Steam/steamapps").path]
-            for candidate in inventory.applications where candidate.path.contains("/steamapps/common/") {
+            for candidate in inventory.applications where candidate.path.range(of: "/steamapps/common/", options: .caseInsensitive) != nil {
                 if let game = gameContaining(candidate.path), game.appID == appID { return game }
-                if let range = candidate.path.range(of: "/steamapps/common/") { libraries.append(String(candidate.path[..<range.lowerBound]) + "/steamapps") }
+                if let range = candidate.path.range(of: "/steamapps/common/", options: .caseInsensitive) { libraries.append(String(candidate.path[..<range.lowerBound]) + "/steamapps") }
             }
             // A game without a bundle the scan found: its manifest names its folder.
             for steamapps in Set(libraries) {
@@ -55,7 +55,7 @@ enum SteamGame {
 
     /// The game whose folder holds `path`, from the library's manifests.
     static func gameContaining(_ path: String) -> Game? {
-        guard let range = path.range(of: "/steamapps/common/") else { return nil }
+        guard let range = path.range(of: "/steamapps/common/", options: .caseInsensitive) else { return nil }
         let steamapps = String(path[..<range.lowerBound]) + "/steamapps"
         guard let installDirectory = path[range.upperBound...].split(separator: "/").first.map(String.init),
               !installDirectory.isEmpty, installDirectory != ".", installDirectory != ".." else { return nil }
@@ -105,8 +105,10 @@ enum SteamGame {
         var result = SteamClient()
         let library = roots.home.appending(path: "Library", directoryHint: .isDirectory)
         let steam = library.appending(path: "Application Support/Steam", directoryHint: .isDirectory)
-        let steamapps = steam.appending(path: "steamapps", directoryHint: .isDirectory)
-        let common = steamapps.appending(path: "common", directoryHint: .isDirectory)
+        let steamappsName = collector.list(steam).first { $0.lowercased() == "steamapps" } ?? "steamapps"
+        let steamapps = steam.appending(path: steamappsName, directoryHint: .isDirectory)
+        let commonName = collector.list(steamapps).first { $0.lowercased() == "common" } ?? "common"
+        let common = steamapps.appending(path: commonName, directoryHint: .isDirectory)
 
         // Games Steam lists as installed (by manifest), with the names the scan gave them.
         var installed: [String: (name: String, manifest: String)] = [:]
@@ -119,12 +121,13 @@ enum SteamGame {
         }
         let keptManifests = Set(installed.values.map(\.manifest))
 
-        for name in collector.list(steam) where name != "steamapps" && !name.hasPrefix(".") {
+        // Older installs name it "SteamApps"; the file system ignores case, so must this.
+        for name in collector.list(steam) where name.lowercased() != "steamapps" && !name.hasPrefix(".") {
             result.findings.append(Finding(path: steam.appending(path: name).path, tier: .exact, reason: "Steam's client and data"))
         }
         for name in collector.list(steamapps) where !name.hasPrefix(".") {
             let path = steamapps.appending(path: name).path
-            if name == "common" {
+            if name.lowercased() == "common" {
                 for game in collector.list(common) where !game.hasPrefix(".") {
                     let folder = common.appending(path: game).path
                     if let entry = installed[game.lowercased()] {
