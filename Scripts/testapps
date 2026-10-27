@@ -7,8 +7,13 @@
 #                               with a zap list and an rmdir vendor folder holding another product
 #   Scripts/testapps package    DeleteTest Package: builds a .pkg (root-owned app, /Library files,
 #                               a loaded launch daemon, a receipt); you install it with sudo
+#   Scripts/testapps suite      DeleteTest Suite + DeleteTest Suite Helper: one Homebrew cask that
+#                               installs two apps, which delete must remove together
+#   Scripts/testapps shared     DeleteTest Shared + DeleteTest Shared Pro: two sandboxed apps sharing
+#                               an app group, one identifier a prefix of the other's
+#   Scripts/testapps all        plain, brew, suite and shared (package needs your password: separate)
 #   Scripts/testapps check      what's left of each test app, and what must survive
-#   Scripts/testapps untap      removes the local Homebrew tap once DeleteTest Brew is gone
+#   Scripts/testapps untap      removes the local Homebrew tap once the Homebrew test apps are gone
 set -euo pipefail
 
 project=${0:A:h:h}
@@ -58,7 +63,29 @@ launch_item() {
     plutil -insert RunAtLoad -bool false "$plist"
 }
 
+# tap_dir: the local tap's folder, made when missing.
+tap_dir() {
+    local repository=$(brew --repository)
+    local dir=$repository/Library/Taps/${tap%%/*}/homebrew-${tap##*/}
+    [[ -d $dir ]] || brew tap-new --no-git "$tap" >/dev/null
+    mkdir -p "$dir/Casks"
+    print -r -- "$dir"
+}
+
+# sandbox_entitlements <file> <app group>: sandboxed, with one app group.
+sandbox_entitlements() {
+    plutil -create xml1 "$1"
+    plutil -insert com\\.apple\\.security\\.app-sandbox -bool true "$1"
+    plutil -insert com\\.apple\\.security\\.application-groups -array "$1"
+    plutil -insert com\\.apple\\.security\\.application-groups.0 -string "$2" "$1"
+}
+
 command=${1:-}
+if [[ $command == all ]]; then
+    for part in plain brew suite shared; do "$0" "$part"; done
+    print "\nFor the package case (asks for your password):  Scripts/testapps package"
+    exit 0
+fi
 case $command in
 plain)
     app="$HOME/Applications/DeleteTest Plain.app"
@@ -89,17 +116,11 @@ brew)
     rm -rf -- "$staging"; mkdir -p "$staging"
     # Sandboxed, with an app group: macOS gives it a container, and the group comes from its signature.
     entitlements=$out/brew-entitlements.plist
-    plutil -create xml1 "$entitlements"
-    plutil -insert com\\.apple\\.security\\.app-sandbox -bool true "$entitlements"
-    plutil -insert com\\.apple\\.security\\.application-groups -array "$entitlements"
-    plutil -insert com\\.apple\\.security\\.application-groups.0 -string group.com.macdelete.test.brew "$entitlements"
+    sandbox_entitlements "$entitlements" group.com.macdelete.test.brew
     make_app "DeleteTest Brew" com.macdelete.test.brew "$staging" "$entitlements"
     rm -f "$out/DeleteTestBrew.zip"
     ditto -c -k --keepParent "$staging/DeleteTest Brew.app" "$out/DeleteTestBrew.zip"
-    repository=$(brew --repository)
-    tapdir=$repository/Library/Taps/${tap%%/*}/homebrew-${tap##*/}
-    [[ -d $tapdir ]] || brew tap-new --no-git "$tap" >/dev/null
-    mkdir -p "$tapdir/Casks"
+    tapdir=$(tap_dir)
     cat > "$tapdir/Casks/deletetest-brew.rb" <<EOF
 cask "deletetest-brew" do
   version "1.0"
@@ -184,13 +205,62 @@ EOF
     print "  sudo installer -pkg ${(q)out}/DeleteTestPackage.pkg -target /"
     print "then launch it once:  open -g \"/Applications/DeleteTest Package.app\""
     ;;
+suite)
+    staging=$out/suite
+    rm -rf -- "$staging"; mkdir -p "$staging"
+    make_app "DeleteTest Suite" com.macdelete.test.suite "$staging"
+    make_app "DeleteTest Suite Helper" com.macdelete.test.suitehelper "$staging"
+    rm -f "$out/DeleteTestSuite.zip"
+    (cd "$staging" && zip -qry "$out/DeleteTestSuite.zip" "DeleteTest Suite.app" "DeleteTest Suite Helper.app")
+    tapdir=$(tap_dir)
+    cat > "$tapdir/Casks/deletetest-suite.rb" <<EOF
+cask "deletetest-suite" do
+  version "1.0"
+  sha256 :no_check
+
+  url "file://$out/DeleteTestSuite.zip"
+  name "DeleteTest Suite"
+  desc "Disposable two-app cask for testing macdelete"
+  homepage "https://example.invalid/"
+
+  app "DeleteTest Suite.app"
+  app "DeleteTest Suite Helper.app"
+
+  zap trash: "~/Library/Preferences/com.macdelete.test.suite.plist"
+end
+EOF
+    HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 brew install --cask "$tap/deletetest-suite"
+    for name in "DeleteTest Suite" "DeleteTest Suite Helper"; do
+        for app in "$HOME/Applications/$name.app" "/Applications/$name.app"; do
+            [[ -d $app ]] && xattr -dr com.apple.quarantine "$app" && codesign -f -s - "$app" 2>/dev/null && open -g "$app"
+        done
+    done
+    sleep 1
+    print "Installed DeleteTest Suite and its helper (both running). Try: delete --dry-run \"DeleteTest Suite Helper\" and \"DeleteTest Suite\""
+    ;;
+shared)
+    # Two apps from one developer sharing an app group: the group's folder stays while either
+    # app does. com.macdelete.test.shared is a prefix of com.macdelete.test.shared.pro, so
+    # com.macdelete.test.shared.* items must not be taken from the Pro app either.
+    mkdir -p "$HOME/Applications"
+    entitlements=$out/shared-entitlements.plist
+    sandbox_entitlements "$entitlements" group.com.macdelete.test.shared
+    make_app "DeleteTest Shared" com.macdelete.test.shared "$HOME/Applications" "$entitlements"
+    make_app "DeleteTest Shared Pro" com.macdelete.test.shared.pro "$HOME/Applications" "$entitlements"
+    mkdir -p "$library/Group Containers/group.com.macdelete.test.shared"
+    print "used by both apps" > "$library/Group Containers/group.com.macdelete.test.shared/shared.txt"
+    open -g "$HOME/Applications/DeleteTest Shared.app" "$HOME/Applications/DeleteTest Shared Pro.app"
+    sleep 1
+    print "Installed DeleteTest Shared and DeleteTest Shared Pro (running). Try: delete --dry-run \"DeleteTest Shared\""
+    ;;
 check)
     cache=$(getconf DARWIN_USER_CACHE_DIR) temp=$(getconf DARWIN_USER_TEMP_DIR)
     report() {  # report <label> <path>
         [[ -e $2 || -L $2 ]] && print "  LEFT   $1: ${2/#$HOME/~}"
         return 0
     }
-    for entry in "Plain:com.macdelete.test.plain" "Brew:com.macdelete.test.brew" "Package:com.macdelete.test.pkg"; do
+    for entry in "Plain:com.macdelete.test.plain" "Brew:com.macdelete.test.brew" "Package:com.macdelete.test.pkg" "Suite:com.macdelete.test.suite" \
+                 "Suite Helper:com.macdelete.test.suitehelper" "Shared:com.macdelete.test.shared" "Shared Pro:com.macdelete.test.shared.pro"; do
         name="DeleteTest ${entry%%:*}" id=${entry#*:}
         print "$name ($id)"
         report app "$HOME/Applications/$name.app"; report app "/Applications/$name.app"
@@ -219,6 +289,19 @@ check)
             elif [[ -d "$library/Application Support/DeleteTest Vendor" ]]; then
                 print "  WRONG  other product's data in the vendor folder is gone"
             fi ;;
+        *.suite)
+            report "Homebrew" "$(brew --prefix)/Caskroom/deletetest-suite" ;;
+        *.shared)
+            # The group stays while the Pro app is installed, and goes with the last of the two.
+            if [[ -d "$HOME/Applications/DeleteTest Shared Pro.app" ]]; then
+                [[ -d "$library/Group Containers/group.com.macdelete.test.shared" ]] && print "  OK     shared app group kept (DeleteTest Shared Pro still uses it)" \
+                    || print "  WRONG  shared app group is gone while DeleteTest Shared Pro still uses it"
+            else
+                report "app group" "$library/Group Containers/group.com.macdelete.test.shared"
+            fi
+            report "container" "$library/Containers/$id" ;;
+        *.shared.pro)
+            report "container" "$library/Containers/$id" ;;
         *.pkg)
             report "package file" "/Library/Application Support/$id"
             report "launch daemon" "/Library/LaunchDaemons/$id.daemon.plist"
@@ -234,11 +317,13 @@ check)
     done
     ;;
 untap)
-    if brew list --cask deletetest-brew >/dev/null 2>&1; then print -u2 "DeleteTest Brew is still installed; delete it first."; exit 1; fi
+    for token in deletetest-brew deletetest-suite; do
+        if brew list --cask $token >/dev/null 2>&1; then print -u2 "The $token cask is still installed; delete its app first."; exit 1; fi
+    done
     brew untap "$tap" && print "Removed the $tap tap."
     ;;
 *)
-    print -u2 "usage: Scripts/testapps plain | brew | package | check | untap"
+    print -u2 "usage: Scripts/testapps plain | brew | package | suite | shared | all | check | untap"
     exit 2
     ;;
 esac

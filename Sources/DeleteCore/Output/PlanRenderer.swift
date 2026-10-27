@@ -38,7 +38,10 @@ public enum PlanRenderer {
             lines += ["", "  Not included (matched by name only; add with --include-name-matches):"] + nameOnly.map(row)
         }
         if !plan.skipped.isEmpty {
-            lines += ["", "  Kept:"] + plan.skipped.map { "  \(display($0.path, home: home))   \($0.reason.terminalInline)" }
+            // Reasons aligned among themselves (kept items have no size column).
+            let kept = plan.skipped.map { (display($0.path, home: home), $0.reason.terminalInline) }
+            let keptWidth = width.map { min(kept.map { $0.0.terminalDisplayWidth }.max() ?? 0, max(40, $0 - 40)) } ?? (kept.map { $0.0.terminalDisplayWidth }.max() ?? 0)
+            lines += ["", "  Kept:"] + kept.map { path, reason in "  " + path + String(repeating: " ", count: max(3, keptWidth - path.terminalDisplayWidth + 3)) + reason }
         }
 
         var also: [String] = []
