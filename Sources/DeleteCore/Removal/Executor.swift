@@ -33,8 +33,39 @@ public struct Executor {
         self.translate = translate
     }
 
+    /// An app and its companions (`plans[0]` is the app). Companions go first, then the app; but
+    /// a plan that runs brew uninstall goes before all, since that removes the cask's other apps
+    /// too, so their privacy permissions are reset before it runs.
+    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+        var report = ExecutionReport()
+        let removedByBrew = Set(plans.indices.filter { plans[$0].removedWithCask != nil })
+        for index in removedByBrew.sorted() { report.warnings += resetPrivacy(plans[index]) }
+        let order = plans.indices.filter { plans[$0].homebrewCask != nil } + plans.indices.reversed().filter { plans[$0].homebrewCask == nil }
+        for index in order {
+            let part = run(plans[index], targets: targets[index], isRoot: isRoot, casks: casks, privacyReset: removedByBrew.contains(index))
+            report.deleted += part.deleted
+            report.failed += part.failed
+            report.removedByHomebrew += part.removedByHomebrew
+            report.warnings += part.warnings
+            if let stopped = part.stopped { report.stopped = [report.stopped, stopped].compactMap { $0 }.joined(separator: "\n") }
+        }
+        return report
+    }
+
+    /// Resets the app's privacy permissions, while it's still installed: tccutil finds the
+    /// identifier through Launch Services and fails once the bundle is gone. Embedded helpers
+    /// often aren't registered at all, so only the app's own failure is reported.
+    public func resetPrivacy(_ plan: RemovalPlan) -> [String] {
+        plan.identifiers.compactMap { identifier in
+            guard let error = actions.resetPrivacy(identifier), identifier == plan.application.bundleIdentifier else { return nil }
+            return "Couldn't reset \(plan.application.name.terminalInline)'s privacy permissions: \(error)"
+        }
+    }
+
     /// `targets` are the confirmed findings with the identities they had when confirmed.
-    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    /// `privacyReset`: the plan's privacy permissions were already reset (an app another plan's
+    /// `brew uninstall` removes first).
+    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], isRoot: Bool, casks: [InstalledCask], privacyReset: Bool = false) -> ExecutionReport {
         var report = ExecutionReport()
         let targetPaths = Set(targets.map { $0.finding.path.lowercased() })
 
@@ -50,14 +81,7 @@ public struct Executor {
             return report
         }
 
-        // Privacy permissions are reset while the app is still installed: tccutil finds the
-        // identifier through Launch Services and fails once the bundle is gone. Embedded helpers
-        // often aren't registered at all, so only the app's own failure is reported.
-        for identifier in plan.identifiers {
-            if let error = actions.resetPrivacy(identifier), identifier == plan.application.bundleIdentifier {
-                report.warnings.append("Couldn't reset its privacy permissions: \(error)")
-            }
-        }
+        if !privacyReset { report.warnings += resetPrivacy(plan) }
 
         // 2. Homebrew removes the app it installed (without --zap: its zap list is in the plan
         // and is deleted permanently below, where brew would move it to the Trash).

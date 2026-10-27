@@ -182,6 +182,26 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(result[1].packages, [])
     }
 
+    /// Deleting a cask's helper runs brew uninstall, which removes the cask's main app too: that
+    /// app's privacy permissions are reset before, while tccutil can still find it.
+    func testAppsBrewRemovesHavePrivacyResetFirst() throws {
+        func plan(_ name: String) -> RemovalPlan {
+            RemovalPlan(application: app(name, id: "com.vendor.\(name.lowercased())", path: "/Applications/\(name).app"), identifiers: ["com.vendor.\(name.lowercased())"], findings: [],
+                        skipped: [], launchItems: [], packages: [], unreadable: [], notes: [], running: false, homebrewCask: "suite")
+        }
+        let plans = RemovalPlan.deduplicated([plan("Helper"), plan("Suite")])
+        XCTAssertEqual(plans[1].removedWithCask, "suite")
+        let actions = RecordingSystemActions()
+        let system = try FakeSystem()
+        let cask = InstalledCask(token: "suite", prefix: system.homebrew.path, version: "1.0", appPaths: [], suitePaths: [], packagePatterns: [])
+        _ = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(group: plans, targets: [[], []], isRoot: false, casks: [cask])
+        let log = actions.recorded
+        let brew = try XCTUnwrap(log.firstIndex(of: "brew uninstall --cask suite"))
+        XCTAssertLessThan(try XCTUnwrap(log.firstIndex(of: "tccutil reset All com.vendor.suite")), brew)
+        XCTAssertLessThan(try XCTUnwrap(log.firstIndex(of: "tccutil reset All com.vendor.helper")), brew)
+        XCTAssertEqual(log.filter { $0.hasPrefix("tccutil") }.count, 2, "each app's permissions are reset once")
+    }
+
     func testFingerprintChangesWithWhatIsDeleted() {
         var plan = RemovalPlan(application: app("Main", id: "com.vendor.main", path: "/Applications/Main.app"), identifiers: [], findings: [Finding(path: "/Applications/Main.app", tier: .exact)],
                                skipped: [], launchItems: [], packages: [], unreadable: [], notes: [], running: false, homebrewCask: nil)

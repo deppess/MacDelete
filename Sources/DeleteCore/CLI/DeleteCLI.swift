@@ -229,20 +229,8 @@ public enum DeleteCLI {
         }
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
-        // Companions first (their launch items stopped and their privacy settings reset while
-        // they're still installed), then the app; but a plan that runs brew uninstall goes first,
-        // since that removes the cask's other apps too.
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        var report = ExecutionReport()
-        let order = plans.indices.filter { plans[$0].homebrewCask != nil } + plans.indices.reversed().filter { plans[$0].homebrewCask == nil }
-        for index in order {
-            let part = executor.run(plans[index], targets: targets[index], isRoot: isRoot, casks: inventory.casks)
-            report.deleted += part.deleted
-            report.failed += part.failed
-            report.removedByHomebrew += part.removedByHomebrew
-            report.warnings += part.warnings
-            if let stopped = part.stopped { report.stopped = [report.stopped, stopped].compactMap { $0 }.joined(separator: "\n") }
-        }
+        let report = executor.run(group: plans, targets: targets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         let needingRoot = plans.flatMap { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot }

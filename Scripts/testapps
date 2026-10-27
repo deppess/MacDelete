@@ -14,6 +14,8 @@
 #   Scripts/testapps all        plain, brew, suite and shared (package needs your password: separate)
 #   Scripts/testapps check      what's left of each test app, and what must survive
 #   Scripts/testapps untap      removes the local Homebrew tap once the Homebrew test apps are gone
+#   Scripts/testapps clean      once every test app is deleted: the files delete rightly leaves (name
+#                               matches, the other product's vendor folder) and the built test apps
 set -euo pipefail
 
 project=${0:A:h:h}
@@ -316,6 +318,17 @@ check)
         if pgrep -f "/$name.app/Contents/MacOS/DeleteTest" >/dev/null; then print "  LEFT   still running"; fi
     done
     ;;
+clean)
+    for app in "$HOME"/Applications/DeleteTest*.app(N) /Applications/DeleteTest*.app(N); do
+        print -u2 "${app:t:r} is still installed; delete it first (and run check)."; exit 1
+    done
+    # Only these fixed paths, which nothing but these scripts creates.
+    for item in "$library/Application Support/DeleteTest "{Plain,Brew,Package,Suite,"Suite Helper",Shared,"Shared Pro",Vendor} \
+                "$HOME/.local/share/deletetest-plain" "/Users/Shared/DeleteTest Plain" "$out"; do
+        [[ -e $item ]] && rm -rf -- "$item" && print "Removed ${item/#$HOME/~}"
+    done
+    if pkgutil --pkg-info com.macdelete.test.pkg >/dev/null 2>&1; then print "DeleteTest Package's receipt is still there: delete \"DeleteTest Package\" removes it."; fi
+    ;;
 untap)
     for token in deletetest-brew deletetest-suite; do
         if brew list --cask $token >/dev/null 2>&1; then print -u2 "The $token cask is still installed; delete its app first."; exit 1; fi
@@ -323,7 +336,7 @@ untap)
     brew untap "$tap" && print "Removed the $tap tap."
     ;;
 *)
-    print -u2 "usage: Scripts/testapps plain | brew | package | suite | shared | all | check | untap"
+    print -u2 "usage: Scripts/testapps plain | brew | package | suite | shared | all | check | untap | clean"
     exit 2
     ;;
 esac
