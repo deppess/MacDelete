@@ -40,7 +40,11 @@ make_app() {
     plutil -insert CFBundlePackageType -string APPL "$info"
     plutil -insert CFBundleShortVersionString -string 1.0 "$info"
     plutil -insert LSUIElement -bool true "$info"
-    codesign -f -s - "$app" 2>/dev/null
+    if [[ -n ${4:-} ]]; then
+        codesign -f -s - --entitlements "$4" "$app" 2>/dev/null
+    else
+        codesign -f -s - "$app" 2>/dev/null
+    fi
 }
 
 # launch_item <plist> <label> <program>: runs the app with --agent, never at load.
@@ -69,6 +73,13 @@ plain)
     ln -sfn "$app/Contents/MacOS/DeleteTest" "$HOME/.local/bin/deletetest-plain"
     make_app "DeleteTest Preview" com.macdelete.test.plain.quicklook "$library/QuickLook"
     mv "$library/QuickLook/DeleteTest Preview.app" "$library/QuickLook/DeleteTest Preview.qlgenerator" 2>/dev/null || true
+    # What an Electron app with Squirrel updates leaves, and XDG and shared folders by name.
+    id=com.macdelete.test.plain
+    mkdir -p "$library/Caches/$id.ShipIt" "$library/Saved Application State/$id.savedState" "$library/WebKit/$id" "$HOME/.local/share/deletetest-plain" "/Users/Shared/DeleteTest Plain"
+    print "update" > "$library/Caches/$id.ShipIt/ShipItState.plist"
+    print "cookies" > "$library/Cookies/$id.binarycookies"
+    print "data" > "$HOME/.local/share/deletetest-plain/state"
+    print "shared" > "/Users/Shared/DeleteTest Plain/shared.txt"
     open -g "$app"
     sleep 1
     print "Installed DeleteTest Plain (running, launch agent loaded). Try: delete --dry-run \"DeleteTest Plain\""
@@ -76,7 +87,13 @@ plain)
 brew)
     staging=$out/brew
     rm -rf -- "$staging"; mkdir -p "$staging"
-    make_app "DeleteTest Brew" com.macdelete.test.brew "$staging"
+    # Sandboxed, with an app group: macOS gives it a container, and the group comes from its signature.
+    entitlements=$out/brew-entitlements.plist
+    plutil -create xml1 "$entitlements"
+    plutil -insert com\\.apple\\.security\\.app-sandbox -bool true "$entitlements"
+    plutil -insert com\\.apple\\.security\\.application-groups -array "$entitlements"
+    plutil -insert com\\.apple\\.security\\.application-groups.0 -string group.com.macdelete.test.brew "$entitlements"
+    make_app "DeleteTest Brew" com.macdelete.test.brew "$staging" "$entitlements"
     rm -f "$out/DeleteTestBrew.zip"
     ditto -c -k --keepParent "$staging/DeleteTest Brew.app" "$out/DeleteTestBrew.zip"
     repository=$(brew --repository)
@@ -105,13 +122,16 @@ EOF
     HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 brew install --cask "$tap/deletetest-brew"
     # The zap list's own folder, and another product's data in the shared vendor folder: the
     # rmdir must leave the vendor folder because of it.
+    mkdir -p "$library/Group Containers/group.com.macdelete.test.brew"
+    print "group data" > "$library/Group Containers/group.com.macdelete.test.brew/shared.txt"
     mkdir -p "$library/Application Support/DeleteTest Vendor/Brew" "$library/Application Support/DeleteTest Vendor/Other Product"
     print "state" > "$library/Application Support/DeleteTest Vendor/Brew/state.txt"
     print "must survive" > "$library/Application Support/DeleteTest Vendor/Other Product/keep.txt"
     # Homebrew quarantines what it installs, and Gatekeeper rejects an ad-hoc signed app; this
     # one was built here, so its quarantine flag is cleared.
     for app in "$HOME/Applications/DeleteTest Brew.app" "/Applications/DeleteTest Brew.app"; do
-        [[ -d $app ]] && xattr -dr com.apple.quarantine "$app" && open -g "$app"
+        # Homebrew re-signs what it installs, dropping the entitlements; this app is ours, so they're put back.
+        [[ -d $app ]] && xattr -dr com.apple.quarantine "$app" && codesign -f -s - --entitlements "$entitlements" "$app" 2>/dev/null && open -g "$app"
     done
     sleep 1
     print "Installed DeleteTest Brew (running). Try: delete --dry-run \"DeleteTest Brew\""
@@ -181,11 +201,17 @@ check)
         [[ -e "$library/Application Support/$name" ]] && print "  NAME   ~/Library/Application Support/$name (name match: stays unless --include-name-matches)"
         case $id in
         *.plain)
+            report "updater cache" "$library/Caches/$id.ShipIt"
+            report "cookies" "$library/Cookies/$id.binarycookies"
+            [[ -e "$HOME/.local/share/deletetest-plain" ]] && print "  NAME   ~/.local/share/deletetest-plain (name match)"
+            [[ -e "/Users/Shared/DeleteTest Plain" ]] && print "  NAME   /Users/Shared/DeleteTest Plain (name match)"
             report "command link" "$HOME/.local/bin/deletetest-plain"
             report "QuickLook plug-in" "$library/QuickLook/DeleteTest Preview.qlgenerator"
             report "launch agent" "$library/LaunchAgents/$id.agent.plist"
             launchctl print "gui/$UID/$id.agent" >/dev/null 2>&1 && print "  LEFT   launch agent $id.agent is still loaded" ;;
         *.brew)
+            report "container" "$library/Containers/$id"
+            report "app group" "$library/Group Containers/group.com.macdelete.test.brew"
             report "Homebrew" "$(brew --prefix)/Caskroom/deletetest-brew"
             report "zap item" "$library/Application Support/DeleteTest Vendor/Brew"
             if [[ -e "$library/Application Support/DeleteTest Vendor/Other Product/keep.txt" ]]; then

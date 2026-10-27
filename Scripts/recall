@@ -67,7 +67,11 @@ for application in listing:
     plan = json.loads(run.stdout)
     findings = {finding["path"]: finding["tier"] for finding in plan["findings"]}
     kept = {item["path"]: item["reason"] for item in plan["kept"]}
+    emptied = set(plan.get("emptyFolders", []))
     def outcome(path):
+        # A folder the plan empties item by item and then removes (Steam's) is found.
+        if path in emptied:
+            return "exact"
         for found, tier in findings.items():
             if path == found or path.startswith(found + "/"):
                 return tier
