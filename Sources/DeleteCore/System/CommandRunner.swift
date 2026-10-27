@@ -28,25 +28,6 @@ func isSafeAbsolutePath(_ value: String) -> Bool {
     value.hasPrefix("/") && !value.split(separator: "/").contains("..") && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
 }
 
-/// Finds candidate executables named `name` in `standardDirectories` and every PATH-derived directory,
-/// resolves symlinks, and deduplicates by resolved path.
-func discoverExecutables(named name: String, standardDirectories: [String], environment: [String: String]) -> [URL] {
-    var candidates = standardDirectories.map { URL(filePath: $0, directoryHint: .isDirectory).appending(path: name) }
-    if let path = environment["PATH"] {
-        candidates += path.split(separator: ":").compactMap { entry in
-            let directory = String(entry)
-            guard isSafeAbsolutePath(directory) else { return nil }
-            return URL(filePath: directory, directoryHint: .isDirectory).appending(path: name)
-        }
-    }
-    var seen = Set<String>()
-    return candidates.compactMap { candidate in
-        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
-        guard isRegularExecutable(resolved), seen.insert(resolved.path).inserted else { return nil }
-        return resolved
-    }
-}
-
 func isRegularExecutable(_ url: URL) -> Bool {
     FileManager.default.isExecutableFile(atPath: url.path) && (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
 }

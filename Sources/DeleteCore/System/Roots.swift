@@ -129,9 +129,6 @@ public struct Tools: Sendable {
     public var tccutil = URL(filePath: "/usr/bin/tccutil")
     public var systemextensionsctl = URL(filePath: "/usr/bin/systemextensionsctl")
     public var lsregister = URL(filePath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
-    /// Homebrew's `brew` in the cask's prefix is used when present; this is the fallback.
-    public var brew: URL?
-
     public init() {}
 }
 

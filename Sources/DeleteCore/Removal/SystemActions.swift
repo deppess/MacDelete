@@ -87,8 +87,9 @@ public final class LiveSystemActions: SystemActions, @unchecked Sendable {
 
     public func uninstallCask(token: String, prefix: String) -> String? {
         let brew = URL(filePath: prefix).appending(path: "bin/brew")
-        guard isRegularExecutable(brew.resolvingSymlinksInPath()) || tools.brew != nil else { return "brew not found in \(prefix)" }
-        let executable = isRegularExecutable(brew.resolvingSymlinksInPath()) ? brew : tools.brew!
+        // The cask's own Homebrew: another installation's brew doesn't know the cask.
+        guard isRegularExecutable(brew.resolvingSymlinksInPath()) else { return "brew not found in \(prefix)" }
+        let executable = brew
         var environment = baseEnvironment
         environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
         environment["HOMEBREW_NO_ENV_HINTS"] = "1"
