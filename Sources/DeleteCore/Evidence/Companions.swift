@@ -4,7 +4,7 @@ import Foundation
 /// groups come from how apps were installed, and each group's main app from general signals.
 ///
 /// Groups an app can belong to:
-/// - **Homebrew cask**: every app one cask installed. `brew uninstall` removes them all at once,
+/// - **Homebrew cask**: every app one cask declared. The local receipt model removes them as one,
 ///   so they always go together, in both directions.
 /// - **Installer package**: every app one receipt installed (the app's helpers in
 ///   `/Library/Application Support` included).
@@ -23,7 +23,7 @@ public enum Companions {
     public struct Companion: Sendable {
         public var application: InstalledApp
         public var reason: String
-        /// Removed by the same `brew uninstall` as the app: it can't be kept.
+        /// Removed by the same locally modeled cask plan as the app: it can't be kept.
         public var inseparable = false
     }
 
@@ -57,7 +57,7 @@ public enum Companions {
                 paths.insert(path)
             }
             for other in paths.compactMap({ byPath[$0] }) where isOther(other) {
-                reasons.append((other, "Homebrew's cask \(token) installed it too, and brew uninstall removes them together"))
+                reasons.append((other, "Homebrew cask \(token) declared it too, so delete models them together"))
                 inseparable.insert(other.path)
             }
         }

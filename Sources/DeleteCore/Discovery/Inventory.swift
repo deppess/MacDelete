@@ -11,15 +11,17 @@ public struct Inventory: Sendable {
     /// Scans the roots, the Caskroom and the package receipts concurrently, then works out each
     /// app's source. `sizes` fills in any size Spotlight didn't have by walking those bundles.
     public static func load(roots: Roots, runner: CommandRunner = CommandRunner(), sizes: Bool = true, timing: Timing? = nil) -> Inventory {
-        let casksTask = Concurrent { Caskroom.installedCasks(prefixes: roots.homebrewPrefixes, home: roots.home) }
-        let receiptsTask = Concurrent { PackageReceipts.read(directory: roots.receipts, runner: runner, lsbom: roots.tools.lsbom) }
+        let casksTask = Concurrent { Caskroom.scan(prefixes: roots.homebrewPrefixes, home: roots.home) }
+        let receiptsTask = Concurrent { PackageReceipts.scan(directory: roots.receipts, runner: runner, lsbom: roots.tools.lsbom) }
         // Game folders that are their own bundle (Stardew Valley) never have a Spotlight size and
         // take the longest to walk (11,000 files), so they're walked while the scan runs.
         let folderBundleSizes: Concurrent<[String: Int64]>? = sizes ? Concurrent { folderBundleSizes(roots: roots) } : nil
         let scan = AppScanner(roots: roots, runner: runner).scan()
         timing?.mark("scan")
-        let casks = casksTask.value
-        let receipts = receiptsTask.value
+        let caskScan = casksTask.value
+        let receiptScan = receiptsTask.value
+        let casks = caskScan.casks
+        let receipts = receiptScan.receipts
         timing?.mark("caskroom + receipts")
 
         var applications = scan.applications.map { application in
@@ -41,7 +43,8 @@ public struct Inventory: Sendable {
             for (index, size) in zip(missing, measured.values) { applications[index].size = size }
             timing?.mark("sizes (\(missing.count) walked)")
         }
-        return Inventory(applications: applications, casks: casks, receipts: receipts, warnings: scan.warnings, complete: scan.complete)
+        let warnings = scan.warnings + caskScan.warnings + receiptScan.warnings
+        return Inventory(applications: applications, casks: casks, receipts: receipts, warnings: warnings, complete: scan.complete && caskScan.complete && receiptScan.complete)
     }
 
     /// Sizes of the bundles directly in roots that allow extensionless bundles, by lowercased path.

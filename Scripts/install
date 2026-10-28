@@ -9,13 +9,27 @@ set -euo pipefail
 
 project=${0:A:h:h}
 destination=${1:-$HOME/.local/bin}
+# Apple’s current guidance says ordinary Rosetta support ends in macOS 28.  Swift builds for the
+# architecture of the shell that invokes it, so installing from an Intel/Rosetta Terminal on an
+# Apple-silicon Mac would otherwise leave an x86_64-only binary behind.  Refuse that ambiguous
+# setup instead of creating a tool that cannot run on the next macOS release.
+if [[ $(uname -m) == x86_64 && $(sysctl -in sysctl.proc_translated 2>/dev/null || true) == 1 ]]; then
+    print -u2 "Refusing to build delete under Rosetta. Open a native Apple-silicon terminal and run Scripts/install again."
+    exit 2
+fi
+architecture=$(uname -m)
+case $architecture in
+    arm64|x86_64) ;;
+    *) print -u2 "Unsupported build architecture: $architecture"; exit 2 ;;
+esac
 swift build -c release --package-path "$project" --product delete
 bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
 [[ -x $bin ]] || { print -u2 "No binary at $bin."; exit 1 }
+[[ " $(lipo -archs "$bin") " == *" $architecture "* ]] || { print -u2 "Build did not produce a native $architecture binary."; exit 1 }
 
 mkdir -p -- "$destination"
 install -m 755 -- "$bin" "$destination/delete"
-print "Installed $destination/delete ($(du -h "$destination/delete" | cut -f1))."
+print "Installed $destination/delete ($(du -h "$destination/delete" | cut -f1), $architecture)."
 
 # Tab completion for fish, which loads it from here by itself. zsh and bash: see the README.
 if [[ -d $HOME/.config/fish ]]; then

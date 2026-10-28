@@ -89,6 +89,48 @@ final class RemoverTests: XCTestCase {
 }
 
 final class ExecutorTests: XCTestCase {
+    func testLaunchStopFailureLeavesEveryFindingUntouched() throws {
+        final class FailingActions: SystemActions, @unchecked Sendable {
+            func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
+            func bootout(_ item: LaunchItem) -> String? { "permission denied" }
+            func forgetPackage(_ identifier: String) -> String? { nil }
+            func resetPrivacy(_ identifier: String) -> String? { nil }
+            func unregister(_ appPath: String) -> String? { nil }
+        }
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+        let report = Executor(actions: FailingActions(), allowedRoot: system.root.path, home: system.home)
+            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+
+        XCTAssertNotNil(report.stopped)
+        for finding in plan.selected(includeNameMatches: false) {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: finding.path), "launchctl failure must stop before \(finding.path)")
+        }
+    }
+
+    func testApprovalFingerprintChangesWhenIdentityOrPermissionsChange() throws {
+        let system = try FakeSystem()
+        let path = try system.touch("Users/tester/Library/Preferences/com.example.app.plist")
+        let first = try XCTUnwrap(FileIdentity.of(path.path))
+        let base = RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": first])
+        XCTAssertEqual(chmod(path.path, 0o600), 0)
+        let changedPermissions = try XCTUnwrap(FileIdentity.of(path.path))
+        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": changedPermissions]))
+        try FileManager.default.removeItem(at: path)
+        try system.write("replacement", to: path)
+        let replacement = try XCTUnwrap(FileIdentity.of(path.path))
+        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": replacement]))
+    }
+    func testUnavailableTargetsAreReportedInsteadOfSilentlyDropped() throws {
+        let system = try FakeSystem()
+        let present = try system.touch("Users/tester/Library/Caches/com.example.present")
+        let missing = Finding(path: system.userLibrary.appending(path: "Caches/com.example.missing").path, tier: .exact)
+        let available = Finding(path: present.path, tier: .exact)
+
+        XCTAssertEqual(Executor.targets(for: [available, missing]).map { $0.finding.path }, [present.path])
+        XCTAssertEqual(Executor.unavailableTargets(for: [available, missing]), [missing])
+    }
     func makeExample(_ system: FakeSystem) throws {
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
         try system.makeApp("Example Pro.app", metadata: ["CFBundleIdentifier": "com.example.app.pro"])
@@ -146,11 +188,10 @@ final class ExecutorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path), "the app's data stays when the app can't go")
     }
 
-    func testAHomebrewFailureStopsBeforeAnythingIsDeleted() throws {
-        final class FailingHomebrew: SystemActions, @unchecked Sendable {
+    func testCaskIsRemovedLocallyWithoutCallingHomebrew() throws {
+        final class RecordingActions: SystemActions, @unchecked Sendable {
             func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
             func bootout(_ item: LaunchItem) -> String? { nil }
-            func uninstallCask(token: String, prefix: String) -> String? { "Error: Cask 'example' is not installed." }
             func forgetPackage(_ identifier: String) -> String? { nil }
             func resetPrivacy(_ identifier: String) -> String? { nil }
             func unregister(_ appPath: String) -> String? { nil }
@@ -163,10 +204,10 @@ final class ExecutorTests: XCTestCase {
         let plan = try system.plan("Example")
         XCTAssertEqual(plan.homebrewCask, "example")
         let casks = Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home)
-        let report = Executor(actions: FailingHomebrew(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: casks)
-        XCTAssertTrue(report.stopped?.contains("not installed") ?? false)
-        XCTAssertTrue(report.deleted.isEmpty)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: system.applications.appending(path: "Example.app").path))
+        let report = Executor(actions: RecordingActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: casks)
+        XCTAssertNil(report.stopped)
+        XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: system.applications.appending(path: "Example.app").path))
     }
 
     func testSandboxMapsEveryPathInsideItAndRefusesShallowFolders() throws {
@@ -251,7 +292,7 @@ final class ExecutorTests: XCTestCase {
         XCTAssertFalse(actions.appExistedAtReset.isEmpty)
         XCTAssertTrue(actions.appExistedAtReset.allSatisfy { $0 })
         XCTAssertFalse(FileManager.default.fileExists(atPath: plan.application.bundlePath))
-        XCTAssertTrue(report.warnings.contains { $0.contains("privacy permissions") }, "the app's own failure is reported: \(report.warnings)")
+        XCTAssertTrue(report.actionFailures.contains { $0.contains("privacy permissions") }, "the app's own failure is reported: \(report.actionFailures)")
     }
 
     func testAPartlyDeletedAppStopsAndSaysSo() throws {

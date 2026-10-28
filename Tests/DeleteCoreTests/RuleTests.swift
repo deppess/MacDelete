@@ -12,7 +12,7 @@ final class RuleTests: XCTestCase {
 
     func testTheRemainingIdentifierFolders() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let lib = "Users/tester/Library"
         let expected = [
             "\(lib)/HTTPStorages/com.example.app",
@@ -46,7 +46,7 @@ final class RuleTests: XCTestCase {
     /// `<bundle id>.`, but the exact name and the app's own suffixes still are.
     func testSubIdentifierItemsYieldToAnotherInstalledApp() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         try system.makeApp("Example Pro.app", metadata: ["CFBundleIdentifier": "com.example.app.pro"])
         try system.touch("Users/tester/Library/Caches/com.example.app/")
         try system.touch("Users/tester/Library/Caches/com.example.app.pro/")
@@ -109,7 +109,7 @@ final class RuleTests: XCTestCase {
 
     func testCrashReporterAndSentryNameEvidence() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let lib = "Users/tester/Library"
         try system.touch("\(lib)/Caches/SentryCrash/Example/")
         try system.touch("\(lib)/Application Support/CrashReporter/Example_00000000-1111-2222-3333-444444444444.plist")
@@ -124,7 +124,7 @@ final class RuleTests: XCTestCase {
     /// "couldn't look", never as "nothing there".
     func testAnUnreadableFolderIsReportedNotTakenAsEmpty() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let containers = try system.touch("Users/tester/Library/Containers/")
         try system.touch("Users/tester/Library/Containers/com.example.app/")
         XCTAssertEqual(chmod(containers.path, 0o000), 0)
@@ -152,7 +152,7 @@ final class RuleTests: XCTestCase {
     /// A matched item's folder is never selected, even when everything in it matched.
     func testTheFolderHoldingAMatchIsNeverSelected() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         try system.touch("Users/tester/Library/Caches/com.plausiblelabs.crashreporter.data/com.example.app/")
         try system.touch("Users/tester/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.example.app.sfl4")
         let paths = try system.plan("Example").findings.map(\.path)
@@ -189,7 +189,7 @@ final class RuleTests: XCTestCase {
     /// Plug-ins outside the bundle, by their own identifier.
     func testInstalledPluginsByTheirOwnIdentifier() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         try system.makeApp("Other.app", metadata: ["CFBundleIdentifier": "com.other.app"])
         let lib = system.userLibrary
         try system.makeApp("ExamplePreview.qlgenerator", in: lib.appending(path: "QuickLook"), metadata: ["CFBundleIdentifier": "com.example.app.quicklook"])
@@ -215,7 +215,7 @@ final class RuleTests: XCTestCase {
 
     func testHelpCachesAndOtherPerAppSystemFolders() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let lib = "Users/tester/Library"
         let expected = ["\(lib)/Caches/com.apple.helpd/Generated/com.example.app.help*1.2", "\(lib)/Caches/com.apple.nsurlsessiond/Downloads/com.example.app",
                         "\(lib)/WebKit/Databases/___IndexedDB/com.example.app", "\(lib)/Preferences/com.apple.FileProvider/com.example.app.Share"]
@@ -323,6 +323,22 @@ final class RuleTests: XCTestCase {
         plan = try system.plan("Microsoft Word")
         XCTAssertTrue(plan.findings.contains { $0.path.hasSuffix("com.microsoft.errorreporting") && $0.tier == .exact }, "the last app takes the helper's data")
         XCTAssertTrue(plan.notes.contains { $0.contains("Microsoft AutoUpdate only updates this vendor's apps") }, "\(plan.notes)")
+    }
+
+    /// Embedded helpers are identified by their own bundle identifier, not their carrier app's
+    /// vendor prefix. LibreWolf and Tor Browser are a real cross-vendor example: both carry
+    /// Mozilla's updater helper.
+    func testCrossVendorEmbeddedHelperStaysForAnotherInstalledApp() throws {
+        let system = try FakeSystem()
+        try system.makeApp("LibreWolf.app", metadata: ["CFBundleIdentifier": "io.gitlab.librewolf-community"])
+        try system.makeApp("LibreWolf.app/Contents/SharedSupport/Updater.app", metadata: ["CFBundleIdentifier": "org.mozilla.updater"])
+        try system.makeApp("Tor Browser.app", metadata: ["CFBundleIdentifier": "org.torproject.torbrowser"])
+        try system.makeApp("Tor Browser.app/Contents/SharedSupport/Updater.app", metadata: ["CFBundleIdentifier": "org.mozilla.updater"])
+        try system.touch("Users/tester/Library/Caches/org.mozilla.updater/")
+
+        let plan = try system.plan("LibreWolf")
+        XCTAssertFalse(plan.findings.contains { $0.path.hasSuffix("Caches/org.mozilla.updater") }, "\(plan.findings)")
+        XCTAssertTrue(plan.skipped.contains { $0.path.hasSuffix("Caches/org.mozilla.updater") && $0.reason.contains("Tor Browser") }, "\(plan.skipped)")
     }
 
     /// Adobe's layout: product folders inside the vendor's folders, and a "<App> Settings" folder.

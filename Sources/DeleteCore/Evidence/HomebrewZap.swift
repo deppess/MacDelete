@@ -4,14 +4,14 @@ import Foundation
 /// Homebrew's hand-written `zap` lists: what a cask's maintainers found each app leaves behind.
 enum HomebrewZap {
     struct Evidence {
-        /// The cask Homebrew uninstalls first, when it installed the app.
+        /// The installed cask whose concrete receipt artifacts this plan reproduces locally.
         var cask: String?
         var findings: [Finding] = []
         var skipped: [Skipped] = []
         var emptyFolders: [String] = []
     }
 
-    /// Exact for a cask Homebrew installed (brew --zap would remove the same), name evidence from
+        /// Exact for an installed cask, name evidence from
     /// the catalog's list otherwise. An item another installed app's identifier names stays,
     /// whatever the list says.
     static func evidence(for application: InstalledApp, casks: [InstalledCask], catalog: (token: String, paths: [String])?, ownership: Ownership, home: URL) -> Evidence {
@@ -24,6 +24,24 @@ enum HomebrewZap {
         }
         if case let .homebrew(token, true) = application.source, let cask = casks.first(where: { $0.token == token }) {
             result.cask = token
+            // Homebrew's Caskroom payload is an uninstall side effect too.  It is included so
+            // the plan remains truthful even for otherwise simple app-only casks.
+            let caskroom = URL(filePath: cask.prefix).appending(path: "Caskroom/\(cask.token)").path
+            if FileManager.default.fileExists(atPath: caskroom) {
+                result.findings.append(Finding(path: caskroom, tier: .exact, reason: "Homebrew cask files"))
+            }
+            for path in cask.removalArtifactPaths where FileManager.default.fileExists(atPath: path) {
+                result.findings.append(Finding(path: path, tier: .exact, reason: "Homebrew command-line tool"))
+            }
+            for path in cask.uninstallDeletePaths where FileManager.default.fileExists(atPath: path) {
+                result.findings.append(Finding(path: path, tier: .exact, reason: "Homebrew declared delete"))
+            }
+            for path in cask.uninstallEmptyFolders where !result.emptyFolders.contains(path) {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+                    result.emptyFolders.append(path)
+                }
+            }
             let zap = installedCaskPaths(token: token, prefix: cask.prefix)
             for path in zap.remove.flatMap({ expand($0, home: home) }) {
                 if let owner = claimant(path) {
@@ -44,8 +62,8 @@ enum HomebrewZap {
         return result
     }
 
-    /// The zap paths in an installed cask's own receipt. `brew uninstall --zap` deletes `remove`;
-    /// `removeIfEmpty` are its `rmdir` folders, which Homebrew removes only when empty (a vendor
+    /// The zap paths in an installed cask's own receipt. `remove` paths are modeled as concrete
+    /// findings; `removeIfEmpty` are its `rmdir` folders, which are removed only when empty (a vendor
     /// folder, `~/.claude`): never deleted with their contents.
     static func installedCaskPaths(token: String, prefix: String) -> (remove: [String], removeIfEmpty: [String]) {
         let receipt = URL(filePath: prefix).appending(path: "Caskroom/\(token)/.metadata/INSTALL_RECEIPT.json")

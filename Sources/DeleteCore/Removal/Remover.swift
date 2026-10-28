@@ -7,11 +7,17 @@ public struct FileIdentity: Sendable, Equatable {
     public var device: Int32
     public var inode: UInt64
     public var type: mode_t
+    /// Ownership and permission changes can turn an approved ordinary path into one that needs a
+    /// different privilege boundary. They are part of the confirmation identity too.
+    public var owner: uid_t
+    public var group: gid_t
+    public var permissions: mode_t
 
     public static func of(_ path: String) -> FileIdentity? {
         var info = stat()
         guard lstat(path, &info) == 0 else { return nil }
-        return FileIdentity(device: info.st_dev, inode: info.st_ino, type: info.st_mode & S_IFMT)
+        return FileIdentity(device: info.st_dev, inode: info.st_ino, type: info.st_mode & S_IFMT,
+                            owner: info.st_uid, group: info.st_gid, permissions: info.st_mode & 0o7777)
     }
 }
 
@@ -67,30 +73,45 @@ public enum Remover {
         if current.type != S_IFDIR {
             return unlink(path) == 0 || errno == ENOENT ? .success(()) : .failure(.incomplete(failures: 1, first: String(cString: strerror(errno))))
         }
-        return removeTree(path, device: current.device)
+        return removeTree(path, device: current.device, identity: target.identity)
     }
 
     /// Files Finder keeps in a folder: its view settings, and a custom folder icon ("Icon\r").
     static func isFinderMetadata(_ name: String) -> Bool { name == ".DS_Store" || name == "Icon\r" }
 
-    /// Removes a folder only if nothing is in it but Finder's files: Homebrew's `rmdir`, and an
-    /// app's own folder once its companions are gone. True when it was removed. Anything else
-    /// (contents, a link, a protected folder) leaves it alone.
-    public static func removeIfEmpty(_ path: String, allowedRoot: String, home: URL) -> Bool {
+    /// Whether changing this path needs elevation. This is evaluated while the plan is displayed
+    /// and again through the identity-bound sudo rerun.
+    public static func needsRoot(_ path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return false }
+        return info.st_uid != getuid() || access((path as NSString).deletingLastPathComponent, W_OK) != 0
+    }
+
+    /// Removes a confirmed folder only if it is literally empty. Unlike a normal deletion this
+    /// never removes Finder metadata as a side effect: `rmdir` means no contents are authorized.
+    /// `false` is the benign result "still contains something".
+    public static func removeIfEmpty(_ target: RemovalTarget, allowedRoot: String, home: URL) -> Result<Bool, RemovalError> {
+        let path = target.path
         let root = allowedRoot == "/" ? "" : allowedRoot
         let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
         guard path.hasPrefix("/"), !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
               root.isEmpty || path.hasPrefix(root + "/"),
               !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root) || isSteamSkeleton(String(path.dropFirst(root.count)), home: home, root: root),
-              !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return false }
-        var info = stat()
-        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-              let names = try? FileManager.default.contentsOfDirectory(atPath: path), names.allSatisfy(isFinderMetadata) else { return false }
-        for name in names { unlink(path + "/" + name) }
-        return rmdir(path) == 0
+              !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return .failure(.neverDeletable) }
+        guard let current = FileIdentity.of(path) else { return .failure(.missing) }
+        guard current == target.identity else { return .failure(.changed) }
+        guard current.type == S_IFDIR else { return .failure(.changed) }
+        let parent = (path as NSString).deletingLastPathComponent
+        guard let real = realpath(parent, nil) else { return .failure(.missing) }
+        defer { free(real) }
+        let resolvedParent = String(cString: real)
+        guard resolvedParent == parent || isSystemLink(parent, resolved: resolvedParent) else { return .failure(.reachedThroughLink) }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: path), names.isEmpty else { return .success(false) }
+        if rmdir(path) == 0 || errno == ENOENT { return .success(true) }
+        return .failure(.incomplete(failures: 1, first: String(cString: strerror(errno))))
     }
 
-    private static func removeTree(_ path: String, device: Int32) -> Result<Void, RemovalError> {
+    private static func removeTree(_ path: String, device: Int32, identity: FileIdentity) -> Result<Void, RemovalError> {
         let copy = strdup(path)
         defer { free(copy) }
         var paths: [UnsafeMutablePointer<CChar>?] = [copy, nil]
@@ -110,6 +131,9 @@ public enum Remover {
             let entryPath = entry.pointee.fts_path!
             switch Int32(entry.pointee.fts_info) {
             case FTS_D:
+                // `fts_open` happens after the confirmation-time lstat. Check the root again at
+                // the moment traversal starts, before it can visit anything below a replacement.
+                if String(cString: entryPath) == path, FileIdentity.of(path) != identity { return .failure(.changed) }
                 // A volume mounted inside is never entered (FTS_XDEV); it's reported when its
                 // folder can't be removed.
                 if let info = entry.pointee.fts_statp?.pointee, info.st_dev != device { fts_set(stream, entry, FTS_SKIP); fail(entry, EXDEV) }

@@ -90,6 +90,9 @@ final class SourceTests: XCTestCase {
         XCTAssertEqual(cask.appPaths, [system.home.appending(path: "Applications/Raycast.app").path, system.home.appending(path: "Applications/Renamed.app").path])
         XCTAssertEqual(cask.suitePaths, [system.home.appending(path: "Applications/Raycast Tools").path])
         XCTAssertEqual(cask.packagePatterns, ["com.raycast.pkg", "com.raycast.driver.*"])
+        XCTAssertEqual(cask.removalArtifactPaths, [])
+        XCTAssertEqual(cask.unsupportedUninstallArtifacts, [])
+        XCTAssertTrue(cask.mayReplicateUninstall)
         XCTAssertTrue(Caskroom.package("com.raycast.driver.hid", matches: "com.raycast.driver.*"))
         XCTAssertFalse(Caskroom.package("com.raycast.pkgextra", matches: "com.raycast.pkg"))
     }
@@ -98,6 +101,89 @@ final class SourceTests: XCTestCase {
         let system = try FakeSystem()
         try system.writeJSON(["uninstall_artifacts": [["app": ["GIMP.app"]]]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/INSTALL_RECEIPT.json"))
         XCTAssertEqual(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first?.appPaths, ["/Applications/GIMP.app"])
+    }
+
+    func testOnlyFullyModelledCaskArtifactsMayBeReplicated() throws {
+        let system = try FakeSystem()
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Safe.app"]], ["zap": [["delete": "~/Library/Caches/safe"]]]]],
+                             to: system.homebrew.appending(path: "Caskroom/safe/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Wrapper.app"]], ["command_wrapper": ["wrapper", ["content": "#!/bin/sh"]]]]],
+                             to: system.homebrew.appending(path: "Caskroom/wrapper/.metadata/INSTALL_RECEIPT.json"))
+        let casks = Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home)
+        XCTAssertTrue(try XCTUnwrap(casks.first { $0.token == "safe" }).mayReplicateUninstall)
+        let wrapper = try XCTUnwrap(casks.first { $0.token == "wrapper" })
+        XCTAssertTrue(wrapper.mayReplicateUninstall)
+        XCTAssertEqual(wrapper.removalArtifactPaths, [system.homebrew.appending(path: "bin/wrapper").path])
+    }
+
+    func testDeclarativeUninstallDeleteAndRmdirAreBoundedArtifacts() throws {
+        let system = try FakeSystem()
+        let deleted = system.root.appending(path: "Library/Application Support/Example/helper")
+        let emptied = system.root.appending(path: "Library/Application Support/Example")
+        let receipt: [String: Any] = ["uninstall_artifacts": [
+            ["app": ["Example.app"]],
+            ["uninstall": [["delete": deleted.path, "rmdir": emptied.path]]],
+        ]]
+        try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertTrue(cask.mayReplicateUninstall)
+        XCTAssertEqual(cask.uninstallDeletePaths, [deleted.path])
+        XCTAssertEqual(cask.uninstallEmptyFolders, [emptied.path])
+    }
+
+    func testGlobbedOrTraversalUninstallPathsAreRefused() throws {
+        let system = try FakeSystem()
+        let receipt: [String: Any] = ["uninstall_artifacts": [["uninstall": [["delete": "/Library/*"]]]]]
+        try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertFalse(cask.mayReplicateUninstall)
+        XCTAssertEqual(cask.unsupportedUninstallArtifacts, ["uninstall delete"])
+    }
+
+    func testDeclarativeLaunchctlLabelsAreParsedOnlyAsLabels() throws {
+        let system = try FakeSystem()
+        try system.writeJSON(["uninstall_artifacts": [["uninstall": [["launchctl": ["com.example.agent", "com.example.daemon"]]]]]],
+                             to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertTrue(cask.mayReplicateUninstall)
+        XCTAssertEqual(cask.launchctlLabels, ["com.example.agent", "com.example.daemon"])
+    }
+
+    func testDeclarativeQuitIdentifiersAreParsed() throws {
+        let system = try FakeSystem()
+        let receipt: [String: Any] = ["uninstall_artifacts": [["uninstall": [["quit": "com.example.app"]]]]]
+        try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertTrue(cask.mayReplicateUninstall)
+        XCTAssertEqual(cask.quitIdentifiers, ["com.example.app"])
+    }
+
+    func testBroadPackageReceiptPatternIsRefused() throws {
+        let system = try FakeSystem()
+        let receipt: [String: Any] = ["uninstall_artifacts": [["uninstall": [["pkgutil": ".*"]]]]]
+        try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertFalse(cask.mayReplicateUninstall)
+        XCTAssertEqual(cask.unsupportedUninstallArtifacts, ["uninstall pkgutil"])
+    }
+
+    func testTwoComponentPackagePrefixIsRefused() throws {
+        let system = try FakeSystem()
+        let receipt: [String: Any] = ["uninstall_artifacts": [["uninstall": [["pkgutil": "com.vendor.*"]]]]]
+        try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
+        XCTAssertFalse(cask.mayReplicateUninstall)
+    }
+
+    func testUnreadableCaskMetadataMakesTheCaskIndexIncomplete() throws {
+        let system = try FakeSystem()
+        let receipt = system.homebrew.appending(path: "Caskroom/broken/.metadata/INSTALL_RECEIPT.json")
+        try system.write("not json", to: receipt)
+
+        let scan = Caskroom.scan(prefixes: [system.homebrew], home: system.home)
+        XCTAssertFalse(scan.complete)
+        XCTAssertTrue(scan.casks.isEmpty)
+        XCTAssertTrue(scan.warnings.contains { $0.contains("broken") && $0.contains("receipt") }, "\(scan.warnings)")
     }
 
     func testBOMListingYieldsTopLevelApplications() {
@@ -119,6 +205,21 @@ final class SourceTests: XCTestCase {
         XCTAssertEqual(receipts.packages(for: "/Applications/Vital.app"), ["audio.vital.synth"])
         XCTAssertEqual(receipts.packages(for: "/applications/vital.app"), ["audio.vital.synth"], "paths compare case-insensitively")
         XCTAssertEqual(receipts.packages(for: "/Applications/Xcode.app"), [], "Apple's packages are skipped")
+    }
+
+    func testBrokenReceiptBOMMakesTheReceiptIndexIncomplete() throws {
+        let system = try FakeSystem()
+        let identifier = "com.example.installer"
+        try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": identifier, "InstallPrefixPath": "/"], format: .xml, options: 0)
+            .write(to: system.receipts.appending(path: "\(identifier).plist"))
+        try system.write("bom", to: system.receipts.appending(path: "\(identifier).bom"))
+        let lsbom = system.root.appending(path: "bin/lsbom")
+        try system.write("#!/bin/sh\nexit 42\n", to: lsbom, executable: true)
+
+        let scan = PackageReceipts.scan(directory: system.receipts, lsbom: lsbom)
+        XCTAssertFalse(scan.complete)
+        XCTAssertTrue(scan.receipts.listings.isEmpty)
+        XCTAssertTrue(scan.warnings.contains { $0.contains(identifier) && $0.contains("lsbom exited 42") }, "\(scan.warnings)")
     }
 
     func testSourcePriority() {
@@ -154,6 +255,14 @@ final class SourceTests: XCTestCase {
         XCTAssertEqual(inventory.applications.first { $0.name == "GIMP" }?.source, .homebrew(token: "gimp", declared: true))
         XCTAssertEqual(inventory.applications.first { $0.name == "AltTab" }?.source, .download)
         XCTAssertGreaterThanOrEqual(inventory.applications.first { $0.name == "AltTab" }?.size ?? 0, 10_000, "sizes Spotlight lacks are walked")
+    }
+
+    func testInventoryIsIncompleteWhenOwnershipMetadataCannotBeRead() throws {
+        let system = try FakeSystem()
+        try system.write("not json", to: system.homebrew.appending(path: "Caskroom/broken/.metadata/INSTALL_RECEIPT.json"))
+        let inventory = Inventory.load(roots: system.roots, sizes: false)
+        XCTAssertFalse(inventory.complete)
+        XCTAssertTrue(inventory.warnings.contains { $0.contains("Homebrew receipt") }, "\(inventory.warnings)")
     }
 }
 

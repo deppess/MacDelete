@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 public enum DeleteCLI {
-    public static let version = "0.1.0"
+    public static let version = "1.0.0"
 
     public static let usage = """
     Usage:
@@ -110,7 +110,7 @@ public enum DeleteCLI {
         }
 
         // Apps installed with it go with it, unless they can't be deleted at all. --no-companions
-        // can't keep the apps of the same Homebrew cask: brew uninstall removes them all.
+        // can't split a cask's declared suite because the cask artifacts are modeled together.
         let found = Protection.refusal(for: application) == nil ? Companions.find(for: application, inventory: inventory, roots: roots) : Companions.Result()
         let companions = found.companions.filter { Protection.refusal(for: $0.application) == nil && (invocation.withCompanions || $0.inseparable) }
         var reasons: [String: String] = [:]
@@ -149,7 +149,9 @@ public enum DeleteCLI {
         }
         timing?.mark("find leftovers")
         func elevates(_ plans: [RemovalPlan]) -> Bool {
-            sandbox == nil && !isRoot && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) }
+            sandbox == nil && !isRoot && plans.contains {
+                $0.needsRoot(includeNameMatches: invocation.includeNameMatches) || $0.emptyFolders.contains(where: Remover.needsRoot)
+            }
         }
         func render(_ plans: [RemovalPlan], asRoot: Bool) -> String {
             PlanRenderer.text(plans, reasons: reasons, includeNameMatches: invocation.includeNameMatches, isRoot: asRoot, home: roots.home, width: terminalWidth)
@@ -168,6 +170,13 @@ public enum DeleteCLI {
             let hint = elevate ? " Deleting it needs administrator rights; delete will ask for your password." : sandbox != nil && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) } ? " Some of it needs administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
+        }
+        // Ownership decisions depend on the complete application, Homebrew and receipt indexes.
+        // A dry run may still show the best available evidence, but a destructive run must never
+        // infer that another app or package is absent because one of those indexes could not load.
+        if !inventory.complete, sandbox == nil {
+            printError("Can't safely delete while discovery is incomplete. Nothing was deleted.\n" + inventory.warnings.map { "  \($0)" }.joined(separator: "\n"))
+            return EXIT_FAILURE
         }
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
@@ -202,7 +211,41 @@ public enum DeleteCLI {
 
         let elevate = elevates(plans)
         let asRoot = isRoot || elevate
-        let fingerprint = RemovalPlan.fingerprint(plans, includeNameMatches: invocation.includeNameMatches)
+        // What's deleted must be what was shown: identities are taken before asking. A finding
+        // that vanished here must not silently drop out of `targets`; make a fresh plan instead.
+        let selected = plans.map { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).deleting }
+        let translator: (String) -> String
+        if let sandbox { translator = { sandbox.translate($0) } } else { translator = { $0 } }
+        let unavailable = selected.flatMap { Executor.unavailableTargets(for: $0, translate: translator) }
+        guard unavailable.isEmpty || sandbox != nil else {
+            printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + unavailable.map { "  \(Format.path($0.path, home: roots.home))" }.joined(separator: "\n"))
+            return EXIT_FAILURE
+        }
+        let targets = selected.map { Executor.targets(for: $0, translate: translator) }
+        let emptyTargets: [[String: RemovalTarget]] = plans.map { plan in
+            Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { folder in
+                let path = translator(folder)
+                return FileIdentity.of(path).map { (folder, RemovalTarget(path: path, identity: $0)) }
+            })
+        }
+        let missingEmpty = zip(plans, emptyTargets).flatMap { plan, targets in plan.emptyFolders.filter { targets[$0] == nil } }
+        guard missingEmpty.isEmpty || sandbox != nil else {
+            printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingEmpty.map { "  \(Format.path($0, home: roots.home))" }.joined(separator: "\n"))
+            return EXIT_FAILURE
+        }
+        var approvalIdentities: [String: FileIdentity] = [:]
+        for items in targets { for item in items { approvalIdentities["delete:\(item.finding.path)"] = item.target.identity } }
+        for items in emptyTargets { for (path, target) in items { approvalIdentities["rmdir:\(path)"] = target.identity } }
+        for plan in plans {
+            for item in plan.launchItems {
+                guard let identity = FileIdentity.of(translator(item.plist)) else {
+                    printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n  \(Format.path(item.plist, home: roots.home))")
+                    return EXIT_FAILURE
+                }
+                approvalIdentities["launchctl:\(item.domain.rawValue):\(item.plist)"] = identity
+            }
+        }
+        let fingerprint = RemovalPlan.fingerprint(plans, includeNameMatches: invocation.includeNameMatches, identities: approvalIdentities)
         // Delete's rerun under sudo goes ahead without asking when it found what was confirmed.
         let confirmed = invocation.approved == fingerprint
         if let approved = invocation.approved, !confirmed, !approved.isEmpty {
@@ -217,8 +260,6 @@ public enum DeleteCLI {
             }
             return EXIT_FAILURE
         }
-        // What's deleted must be what was shown: identities are taken before asking.
-        let targets = plans.map { Executor.targets(for: $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).deleting, translate: sandbox?.translate ?? { $0 }) }
         if !confirmed {
             if elevate { print("\nSome of this needs administrator rights: macOS will ask for your password.") }
             print("")
@@ -230,7 +271,7 @@ public enum DeleteCLI {
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(group: plans, targets: targets, isRoot: isRoot, casks: inventory.casks)
+        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         let needingRoot = plans.flatMap { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot }
@@ -241,7 +282,7 @@ public enum DeleteCLI {
             print("\nSandbox: would also have run:")
             recording.recorded.forEach { print("  \($0)") }
         }
-        return report.failed.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
+        return report.failed.isEmpty && report.actionFailures.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
     }
 
     /// Replaces this process with `sudo delete --approved <fingerprint> <app path>`: sudo asks

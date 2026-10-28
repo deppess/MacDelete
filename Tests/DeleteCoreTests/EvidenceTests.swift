@@ -49,7 +49,7 @@ final class FinderTests: XCTestCase {
 
     func testFindsExactLeftoversAcrossTheFixedFolders() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let lib = "Users/tester/Library"
         try system.touch("\(lib)/Application Support/com.example.app/data.db")
         try system.touch("\(lib)/Caches/com.example.app/")
@@ -90,7 +90,7 @@ final class FinderTests: XCTestCase {
 
     func testUUIDContainersAreMatchedByTheirMetadata() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let containers = system.userLibrary.appending(path: "Containers")
         try system.writePlist(["MCMMetadataIdentifier": "com.example.app"], to: containers.appending(path: "2E2C8A0B-6C4D-4F7A-9C1E-0123456789AB/.com.apple.containermanagerd.metadata.plist"))
         try system.writePlist(["MCMMetadataIdentifier": "com.other.app"], to: containers.appending(path: "11111111-2222-3333-4444-555555555555/.com.apple.containermanagerd.metadata.plist"))
@@ -127,7 +127,7 @@ final class FinderTests: XCTestCase {
     /// A job's log files are the app's, unless they're not regular files or another job writes them too.
     func testLaunchItemLogsAreTheAppsUnlessShared() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         let own = try system.touch("Library/Application Support/Example Helper.log")
         let shared = try system.touch("Library/Logs/shared.log")
         try system.writePlist(["Label": "com.example.app.daemon", "Program": "/usr/bin/true", "StandardOutPath": own.path, "StandardErrorPath": "/dev/null"],
@@ -171,7 +171,7 @@ final class FinderTests: XCTestCase {
 
     func testNameEvidenceSkipsGenericAndSharedNames() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         try system.makeApp("Agent.app", metadata: ["CFBundleIdentifier": "com.generic.agent"])
         try system.touch("Users/tester/Library/Application Support/Example/")
         try system.touch("Users/tester/Library/Caches/example/")
@@ -203,7 +203,7 @@ final class FinderTests: XCTestCase {
 
     func testProtectedSymlinkedAndSharedItemsAreKept() throws {
         let system = try FakeSystem()
-        try makeExample(system)
+        _ = try makeExample(system)
         try system.makeApp("Example Beta.app", metadata: ["CFBundleIdentifier": "com.example.app"])
         try system.touch("Users/tester/Library/Preferences/com.example.app.plist")
         // Logs reached through a link to somewhere else.
@@ -353,7 +353,7 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertFalse(plan.findings.contains { $0.path.contains("Documents") })
     }
 
-    func testInstalledCaskZapIsExactAndHandedToHomebrew() throws {
+    func testInstalledCaskZapIsExactAndRemovedLocally() throws {
         let system = try FakeSystem()
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
         try system.touch("Users/tester/Library/Example Data/")
@@ -365,6 +365,116 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertEqual(plan.homebrewCask, "example")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Example Data") }?.reason, "Homebrew zap")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Example Data") }?.tier, .exact)
+        XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Caskroom/example") }?.reason, "Homebrew cask files")
+    }
+
+    func testCaskWithUnmodelledUninstallActionIsRefused() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        let receipt: [String: Any] = [
+            "uninstall_artifacts": [
+                ["app": ["Example.app"]],
+                ["uninstall": [["script": ["executable": "/usr/local/bin/remove-example", "sudo": true]]]],
+            ],
+        ]
+        try system.writeJSON(receipt, to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        XCTAssertThrowsError(try system.plan("Example")) { error in
+            XCTAssertTrue((error as? Refusal)?.message.contains("uninstall script") ?? false, "\(error)")
+        }
+    }
+
+    func testInstalledCaskShowsItsCommandWrapper() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let wrapper = system.homebrew.appending(path: "bin/example")
+        try system.write("#!/bin/sh", to: wrapper)
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["command_wrapper": ["example", ["content": "#!/bin/sh"]]]]],
+                             to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        let plan = try system.plan("Example")
+        XCTAssertEqual(plan.findings.first { $0.path == wrapper.path }?.reason, "Homebrew command-line tool")
+    }
+
+    func testInstalledCaskReplicatesDeclarativeUninstallFiles() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let target = system.root.appending(path: "Library/Application Support/Example/helper")
+        let folder = target.deletingLastPathComponent()
+        try system.write("helper", to: target)
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        let receipt: [String: Any] = ["uninstall_artifacts": [
+            ["app": ["Example.app"]],
+            ["uninstall": [["delete": target.path, "rmdir": folder.path]]],
+        ]]
+        try system.writeJSON(receipt, to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        let plan = try system.plan("Example")
+        XCTAssertEqual(plan.findings.first { $0.path == target.path }?.reason, "Homebrew declared delete")
+        XCTAssertEqual(plan.emptyFolders, [folder.path])
+    }
+
+    func testInstalledCaskLaunchctlLabelMustResolveToAPlist() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["uninstall": [["launchctl": "com.example.agent"]]]]],
+                             to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+        let plist = system.userLibrary.appending(path: "LaunchAgents/com.example.agent.plist")
+        try system.writePlist(["Label": "com.example.agent", "Program": "/usr/bin/true", "AssociatedBundleIdentifiers": ["com.example.app"]], to: plist)
+
+        let plan = try system.plan("Example")
+        XCTAssertEqual(plan.launchItems.map(\.plist), [plist.path])
+        XCTAssertEqual(plan.findings.first { $0.path == plist.path }?.reason, "launch agent")
+    }
+
+    func testInstalledCaskWithUnresolvedLaunchctlLabelIsRefused() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["uninstall": [["launchctl": "com.example.agent"]]]]],
+                             to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        XCTAssertThrowsError(try system.plan("Example")) { error in
+            XCTAssertTrue((error as? Refusal)?.message.contains("could not be resolved") ?? false, "\(error)")
+        }
+    }
+
+    func testInstalledCaskQuitMustNameTheAppOrEmbeddedComponent() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["uninstall": [["quit": "com.other.app"]]]]],
+                             to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+
+        XCTAssertThrowsError(try system.plan("Example")) { error in
+            XCTAssertTrue((error as? Refusal)?.message.contains("does not belong") ?? false, "\(error)")
+        }
+    }
+
+    func testInstalledCaskForgetsOnlyItsDeclaredReceipt() throws {
+        let system = try FakeSystem()
+        try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
+        let metadata = system.homebrew.appending(path: "Caskroom/example/.metadata")
+        try system.writeJSON(["uninstall_artifacts": [["app": ["Example.app"]], ["uninstall": [["pkgutil": "com.example.pkg"]]]]],
+                             to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(["default": ["appdir": system.applications.path]], to: metadata.appending(path: "config.json"))
+        for identifier in ["com.example.pkg", "com.other.pkg"] {
+            try system.writePlist(["PackageIdentifier": identifier, "InstallPrefixPath": system.root.path], to: system.receipts.appending(path: "\(identifier).plist"))
+            try system.write("", to: system.receipts.appending(path: "\(identifier).bom"))
+        }
+        try system.write("#!/bin/sh\ncase \"$2\" in *com.other.pkg*) printf './Library/Other\\n' ;; *) printf './Applications/Example.app\\n' ;; esac\n", to: system.tools.appending(path: "lsbom"), executable: true)
+
+        let plan = try system.plan("Example")
+        XCTAssertEqual(plan.packages, ["com.example.pkg"])
     }
 
     /// `rmdir` in a zap list means "only if empty" (the claude-code cask names ~/.claude this way):
@@ -390,7 +500,7 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertEqual(Set(plan.emptyFolders), [system.home.appending(path: ".example").path, support.appending(path: "Vendor").path, support.appending(path: "Lonely").path])
 
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: ".example/history.jsonl").path), "a folder with contents stays")
         XCTAssertTrue(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Other Product/data").path), "another product's data stays")
@@ -410,14 +520,15 @@ final class HomebrewZapTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
         let caches = try system.touch("Users/tester/Library/Caches/")
         let root = system.root.path
-        XCTAssertFalse(Remover.removeIfEmpty(full.path, allowedRoot: root, home: system.home))
-        XCTAssertTrue(Remover.removeIfEmpty(tidy.path, allowedRoot: root, home: system.home), "only a .DS_Store counts as empty")
-        XCTAssertFalse(Remover.removeIfEmpty(link.path, allowedRoot: root, home: system.home))
+        func remove(_ path: String) -> Result<Bool, RemovalError> { Remover.removeIfEmpty(RemovalTarget(path: path, identity: FileIdentity.of(path)!), allowedRoot: root, home: system.home) }
+        XCTAssertEqual(try remove(full.path).get(), false)
+        XCTAssertEqual(try remove(tidy.path).get(), false, "metadata is content too")
+        XCTAssertThrowsError(try remove(link.path).get())
         XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
-        XCTAssertFalse(Remover.removeIfEmpty(caches.path, allowedRoot: root, home: system.home), "a standard Library folder, even empty")
-        XCTAssertFalse(Remover.removeIfEmpty(system.home.path, allowedRoot: root, home: system.home))
+        XCTAssertThrowsError(try remove(caches.path).get(), "a standard Library folder, even empty")
+        XCTAssertThrowsError(try remove(system.home.path).get())
         let other = try FakeSystem()
-        XCTAssertFalse(Remover.removeIfEmpty(other.root.path, allowedRoot: root, home: system.home), "outside the allowed root")
+        XCTAssertThrowsError(try Remover.removeIfEmpty(RemovalTarget(path: other.root.path, identity: FileIdentity.of(other.root.path)!), allowedRoot: root, home: system.home).get(), "outside the allowed root")
     }
 }
 
@@ -503,7 +614,7 @@ final class SteamAndAppleTests: XCTestCase {
             XCTAssertEqual(plan.skipped.contains { $0.path.hasSuffix("common/Game") && $0.reason.hasPrefix("Game is installed") }, withGame)
 
             let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-                .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+                .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
             XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
             let folder = system.root.appending(path: steam).path
             if withGame {

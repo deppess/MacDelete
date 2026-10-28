@@ -40,7 +40,7 @@ final class RobustnessTests: XCTestCase {
         let plan = try system.plan("Example")
         assertSafe(plan, system)
         let paths = selectedPaths(plan).map { $0.replacingOccurrences(of: system.root.path + "/", with: "") }
-        XCTAssertEqual(Set(paths), ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app"], "only the specific item survives")
+        XCTAssertEqual(Set(paths), ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app", "opt/homebrew/Caskroom/example"], "only the specific user data and cask payload survive")
     }
 
     /// An installer receipt listing system folders, the home folder or everything in /Library.

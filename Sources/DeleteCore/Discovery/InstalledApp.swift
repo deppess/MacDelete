@@ -12,9 +12,8 @@ public enum AppClassification: String, Sendable, Codable {
 
 public enum AppSource: Sendable, Equatable, Codable {
     case appStore
-    /// `declared`: the app is one of the cask's own artifacts, so `brew uninstall` removes it.
-    /// Otherwise it only links into the cask's Caskroom folder (Claude Code's URL handler) and
-    /// brew wouldn't remove it.
+    /// `declared`: the app is one of the cask's own artifacts and is eligible for delete's bounded
+    /// local replication. Otherwise it only links into the cask's Caskroom folder.
     case homebrew(token: String, declared: Bool)
     case macPorts
     case installerPackage(identifiers: [String])

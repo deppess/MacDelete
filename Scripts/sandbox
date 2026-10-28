@@ -39,11 +39,16 @@ clone)
     sources=()
     count=$(plutil -extract findings raw -o - "$plan")
     for (( i = 0; i < count; i++ )); do sources+=("$(plutil -extract "findings.$i.path" raw -o - "$plan")"); done
+    count=$(plutil -extract emptyFolders raw -o - "$plan")
+    for (( i = 0; i < count; i++ )); do sources+=("$(plutil -extract "emptyFolders.$i" raw -o - "$plan")"); done
     companions=$(plutil -extract companions raw -o - "$plan" 2>/dev/null || print 0)
     for (( c = 0; c < companions; c++ )); do
         count=$(plutil -extract "companions.$c.findings" raw -o - "$plan")
         for (( i = 0; i < count; i++ )); do sources+=("$(plutil -extract "companions.$c.findings.$i.path" raw -o - "$plan")"); done
+        count=$(plutil -extract "companions.$c.emptyFolders" raw -o - "$plan")
+        for (( i = 0; i < count; i++ )); do sources+=("$(plutil -extract "companions.$c.emptyFolders.$i" raw -o - "$plan")"); done
     done
+    typeset -U sources
     count=${#sources}
     cloned=0
     for source in $sources; do

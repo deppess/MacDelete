@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum EvidenceTier: String, Sendable, Codable {
@@ -58,12 +59,8 @@ public struct RemovalPlan: Sendable {
     /// System extensions of the app that are active; deleting the app doesn't remove them.
     public var activeSystemExtensions: [String] = []
     public var running: Bool
-    /// Homebrew removes the app first (`brew uninstall --cask <token>`); the rest, its zap list
-    /// included, is deleted permanently by delete.
+    /// The installed Homebrew cask whose declarative artifacts this plan reproduces locally.
     public var homebrewCask: String?
-    /// Another app of the group runs `brew uninstall --cask` for this cask, which removes this
-    /// app too.
-    public var removedWithCask: String?
     /// Folders the cask's zap list names with `rmdir`: removed at the end only if nothing is left
     /// in them (a `.DS_Store` aside), never with their contents.
     public var emptyFolders: [String] = []
@@ -104,7 +101,7 @@ public struct RemovalPlan: Sendable {
         let bundles = plans.map { [$0.application.path, $0.application.bundlePath].map { $0.lowercased() } }
         func isInside(_ path: String, _ other: String) -> Bool { path == other || path.hasPrefix(other + "/") }
         var result: [RemovalPlan] = []
-        var taken: [String] = [], packages = Set<String>(), launchItems = Set<String>(), emptyFolders = Set<String>(), casks = Set<String>()
+        var taken: [String] = [], packages = Set<String>(), launchItems = Set<String>(), emptyFolders = Set<String>()
         for (index, var plan) in plans.enumerated() {
             plan.findings = plan.findings.filter { finding in
                 let lowered = finding.path.lowercased()
@@ -115,8 +112,6 @@ public struct RemovalPlan: Sendable {
             plan.packages = plan.packages.filter { packages.insert($0.lowercased()).inserted }
             plan.launchItems = plan.launchItems.filter { launchItems.insert($0.plist.lowercased()).inserted }
             plan.emptyFolders = plan.emptyFolders.filter { emptyFolders.insert($0.lowercased()).inserted }
-            // One brew uninstall removes every app of a cask.
-            if let cask = plan.homebrewCask, !casks.insert(cask).inserted { (plan.homebrewCask, plan.removedWithCask) = (nil, cask) }
             result.append(plan)
         }
         return result
@@ -124,7 +119,9 @@ public struct RemovalPlan: Sendable {
 
     /// What a group of plans deletes, as one short fingerprint: delete, rerun under sudo, deletes
     /// without asking again only when its plans have the one that was confirmed.
-    public static func fingerprint(_ plans: [RemovalPlan], includeNameMatches: Bool) -> String {
+    /// `identities` is captured after the final plan and before confirmation. It binds a sudo
+    /// rerun to the exact filesystem objects, ownership and modes the user reviewed.
+    public static func fingerprint(_ plans: [RemovalPlan], includeNameMatches: Bool, identities: [String: FileIdentity] = [:]) -> String {
         var text = ""
         for plan in plans {
             text += plan.application.path + "\u{0}"
@@ -133,10 +130,12 @@ public struct RemovalPlan: Sendable {
             text += plan.launchItems.map(\.plist).sorted().joined(separator: "\u{0}") + "\u{1}"
             text += plan.emptyFolders.sorted().joined(separator: "\u{0}") + "\u{1}" + (plan.homebrewCask ?? "") + "\u{2}"
         }
-        // FNV-1a, 64 bits: a check that nothing changed, not a secret.
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
-        return String(hash, radix: 16)
+        for (key, identity) in identities.sorted(by: { $0.key < $1.key }) {
+            text += key + "\u{0}\(identity.device):\(identity.inode):\(identity.type):\(identity.owner):\(identity.group):\(identity.permissions)\u{1}"
+        }
+        // This crosses a privilege boundary, so use a collision-resistant digest rather than a
+        // compact non-cryptographic checksum. It is still not a secret or an authorization token.
+        return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

@@ -45,7 +45,7 @@ public enum PlanRenderer {
         }
 
         var also: [String] = []
-        if let cask = plan.homebrewCask { also.append("Homebrew uninstalls the cask (brew uninstall --cask \(cask))") }
+        if let cask = plan.homebrewCask { also.append("reproduces Homebrew cask \(cask)'s modeled artifacts locally") }
         if !plan.launchItems.isEmpty { also.append("stops \(count(plan.launchItems.count, "launch item")) first") }
         if plan.emptyFolders.count == 1 {
             also.append("removes \(display(plan.emptyFolders[0], home: home)) if nothing is left in it")
@@ -71,7 +71,7 @@ public enum PlanRenderer {
         guard let main = plans.first else { return "" }
         var parts = [text(main, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width)]
         if plans.count > 1 {
-            let keepable = plans.dropFirst().contains { $0.removedWithCask == nil && $0.homebrewCask == nil }
+            let keepable = plans.dropFirst().contains { $0.homebrewCask == nil }
             parts.append("Installed with \(main.application.name.terminalInline), so deleted with it\(keepable ? " (keep \(plans.count == 2 ? "it" : "them") with --no-companions)" : ""):")
             for plan in plans.dropFirst() {
                 var lines = text(plan, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
@@ -86,10 +86,13 @@ public enum PlanRenderer {
     /// delete.
     public static func question(_ plans: [RemovalPlan], includeNameMatches: Bool, isRoot: Bool) -> String? {
         let deleting = plans.flatMap { $0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting }
-        guard !deleting.isEmpty else { return nil }
+        let conditionalFolders = plans.flatMap(\.emptyFolders)
+        guard !deleting.isEmpty || !conditionalFolders.isEmpty else { return nil }
         let total = deleting.reduce(Int64(0)) { $0 + $1.size }
         let apps = plans.filter { !$0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting.isEmpty }.count
-        return "Permanently delete \(count(deleting.count, "item"))\(apps > 1 ? " of \(apps) apps" : "") (\(Format.size(total)))? [y/N] "
+        let nounCount = deleting.count + conditionalFolders.count
+        let suffix = conditionalFolders.isEmpty ? " (\(Format.size(total)))" : " including \(count(conditionalFolders.count, "empty folder")) if still empty"
+        return "Permanently delete \(count(nounCount, "item"))\(apps > 1 ? " of \(apps) apps" : "")\(suffix)? [y/N] "
     }
 
     /// The plan for scripts (and `Scripts/sandbox`, which clones exactly these paths).
@@ -123,11 +126,12 @@ public enum PlanRenderer {
     /// What happened, after deleting.
     public static func report(_ report: ExecutionReport, home: URL) -> String {
         var lines: [String] = []
-        let count = report.deleted.count + report.removedByHomebrew.count
+        let count = report.deleted.count
         if count > 0 { lines.append("Deleted \(Self.count(count, "item")) (\(Format.size(report.freed))).") }
         if !report.failed.isEmpty {
             lines += ["", "Couldn't delete:"] + report.failed.map { "  \(display($0.finding.path, home: home))   \($0.reason)" }
         }
+        if !report.actionFailures.isEmpty { lines += ["", "Incomplete system actions:"] + report.actionFailures.map { "  \($0.terminalInline)" } }
         if let stopped = report.stopped { lines += ["", stopped] }
         if !report.warnings.isEmpty { lines += [""] + report.warnings.map { "Note: " + $0.terminalInline } }
         return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)

@@ -16,7 +16,6 @@ public protocol SystemActions: AnyObject, Sendable {
     func quit(identifiers: [String], bundlePath: String) -> QuitResult
     /// Each returns an error message, or nil on success.
     func bootout(_ item: LaunchItem) -> String?
-    func uninstallCask(token: String, prefix: String) -> String?
     func forgetPackage(_ identifier: String) -> String?
     func resetPrivacy(_ identifier: String) -> String?
     func unregister(_ appPath: String) -> String?
@@ -32,7 +31,6 @@ public final class RecordingSystemActions: SystemActions, @unchecked Sendable {
 
     public func quit(identifiers: [String], bundlePath: String) -> QuitResult { _ = note("quit \(bundlePath)"); return .quit }
     public func bootout(_ item: LaunchItem) -> String? { note("launchctl bootout \(item.domain == .system ? "system" : "gui/<uid>") \(item.plist)") }
-    public func uninstallCask(token: String, prefix: String) -> String? { note("brew uninstall --cask \(token)") }
     public func forgetPackage(_ identifier: String) -> String? { note("pkgutil --forget \(identifier)") }
     public func resetPrivacy(_ identifier: String) -> String? { note("tccutil reset All \(identifier)") }
     public func unregister(_ appPath: String) -> String? { note("lsregister -u \(appPath)") }
@@ -83,21 +81,6 @@ public final class LiveSystemActions: SystemActions, @unchecked Sendable {
         guard let result = try? runner.run(executable: tools.launchctl, arguments: ["bootout", domain, item.plist], environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576) else { return "launchctl didn't run" }
         // 3 (no such process), 5 (I/O error) and 113 (not found) mean it wasn't loaded: nothing to stop.
         return [0, 3, 5, 36, 113].contains(result.status) ? nil : message(result)
-    }
-
-    public func uninstallCask(token: String, prefix: String) -> String? {
-        let brew = URL(filePath: prefix).appending(path: "bin/brew")
-        // The cask's own Homebrew: another installation's brew doesn't know the cask.
-        guard isRegularExecutable(brew.resolvingSymlinksInPath()) else { return "brew not found in \(prefix)" }
-        let executable = brew
-        var environment = baseEnvironment
-        environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
-        environment["HOMEBREW_NO_ENV_HINTS"] = "1"
-        environment["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
-        // Homebrew refuses to run as root; under sudo it runs as the invoking user.
-        let (command, arguments) = asUser(executable, ["uninstall", "--cask", token])
-        guard let result = try? runner.run(executable: command, arguments: arguments, environment: environment, timeout: 600, outputLimit: 8 * 1_048_576) else { return "brew didn't finish" }
-        return result.status == 0 ? nil : message(result)
     }
 
     public func forgetPackage(_ identifier: String) -> String? {

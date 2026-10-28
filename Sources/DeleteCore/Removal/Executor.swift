@@ -4,19 +4,20 @@ import Foundation
 public struct ExecutionReport: Sendable {
     public var deleted: [Finding] = []
     public var failed: [(finding: Finding, reason: String)] = []
-    /// Removed by Homebrew before delete reached them.
-    public var removedByHomebrew: [Finding] = []
+    /// Non-file system actions that did not complete. These make the command fail even when file
+    /// removal succeeded, so the result never claims a complete uninstall.
+    public var actionFailures: [String] = []
     public var warnings: [String] = []
     /// Set when the run stopped before deleting anything (or after the app itself failed).
     public var stopped: String?
 
-    public var freed: Int64 { (deleted + removedByHomebrew).reduce(0) { $0 + $1.size } }
+    public var freed: Int64 { deleted.reduce(0) { $0 + $1.size } }
 }
 
 /// Carries out a confirmed plan. Order matters: launch items are stopped first so nothing
-/// relaunches; privacy permissions are reset while the app is still registered; Homebrew
-/// uninstalls its cask; the app itself goes next, and if it can't be deleted the run stops with
-/// the app's data intact; then the leftovers; then the records (receipts, Launch Services).
+/// relaunches; privacy permissions are reset while the app is still registered; the app itself
+/// goes next, and if it can't be deleted the run stops with the app's data intact; then the
+/// leftovers; then the records (receipts, Launch Services).
 public struct Executor {
     public let actions: SystemActions
     /// Every target must lie inside this folder ("/" for a real run, the sandbox otherwise).
@@ -33,19 +34,15 @@ public struct Executor {
         self.translate = translate
     }
 
-    /// An app and its companions (`plans[0]` is the app). Companions go first, then the app; but
-    /// a plan that runs brew uninstall goes before all, since that removes the cask's other apps
-    /// too, so their privacy permissions are reset before it runs.
-    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    /// An app and its companions (`plans[0]` is the app). Companions go first, then the app.
+    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
-        let removedByBrew = Set(plans.indices.filter { plans[$0].removedWithCask != nil })
-        for index in removedByBrew.sorted() { report.warnings += resetPrivacy(plans[index]) }
-        let order = plans.indices.filter { plans[$0].homebrewCask != nil } + plans.indices.reversed().filter { plans[$0].homebrewCask == nil }
-        for index in order {
-            let part = run(plans[index], targets: targets[index], isRoot: isRoot, casks: casks, privacyReset: removedByBrew.contains(index))
+        let conditional = emptyTargets.count == plans.count ? emptyTargets : Array(repeating: [:], count: plans.count)
+        for index in plans.indices.reversed() {
+            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], isRoot: isRoot, casks: casks)
             report.deleted += part.deleted
             report.failed += part.failed
-            report.removedByHomebrew += part.removedByHomebrew
+            report.actionFailures += part.actionFailures
             report.warnings += part.warnings
             if let stopped = part.stopped { report.stopped = [report.stopped, stopped].compactMap { $0 }.joined(separator: "\n") }
         }
@@ -63,15 +60,16 @@ public struct Executor {
     }
 
     /// `targets` are the confirmed findings with the identities they had when confirmed.
-    /// `privacyReset`: the plan's privacy permissions were already reset (an app another plan's
-    /// `brew uninstall` removes first).
-    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], isRoot: Bool, casks: [InstalledCask], privacyReset: Bool = false) -> ExecutionReport {
+    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
         let targetPaths = Set(targets.map { $0.finding.path.lowercased() })
 
         // 1. Stop the launch items being deleted.
         for item in plan.launchItems where targetPaths.contains(item.plist.lowercased()) {
-            if let error = actions.bootout(item) { report.warnings.append("Couldn't stop \(item.label): \(error)") }
+            if let error = actions.bootout(item) {
+                report.stopped = "Couldn't stop \(item.label): \(error). Nothing was deleted."
+                return report
+            }
         }
 
         // Stopping a launch item can't bring the app back, but one with KeepAlive may have
@@ -81,28 +79,16 @@ public struct Executor {
             return report
         }
 
-        if !privacyReset { report.warnings += resetPrivacy(plan) }
+        report.actionFailures += resetPrivacy(plan)
 
-        // 2. Homebrew removes the app it installed (without --zap: its zap list is in the plan
-        // and is deleted permanently below, where brew would move it to the Trash).
-        var homebrewDone = false
-        if let token = plan.homebrewCask, let cask = casks.first(where: { $0.token == token }) {
-            if let error = actions.uninstallCask(token: token, prefix: cask.prefix) {
-                report.stopped = "Homebrew couldn't uninstall \(token); nothing was deleted.\n\(error)"
-                return report
-            }
-            homebrewDone = true
-        }
-
-        // 3. The app itself first, then everything else.
+        // 2. The app itself first, then everything else. Homebrew cask artifacts are removed
+        // here too: all supported ones are concrete findings in the confirmed plan.
         let isOwn = plan.isOwn
         let ordered = targets.filter { isOwn($0.finding) } + targets.filter { !isOwn($0.finding) }
         for item in ordered {
             switch Remover.remove(item.target, allowedRoot: allowedRoot, home: home) {
             case .success:
                 report.deleted.append(item.finding)
-            case .failure(.missing) where homebrewDone || plan.removedWithCask != nil:
-                report.removedByHomebrew.append(item.finding)
             case .failure(.missing):
                 report.warnings.append("\(Format.path(item.finding.path, home: home)) was already gone.")
             case let .failure(error):
@@ -121,18 +107,28 @@ public struct Executor {
 
         // Folders the zap list removes only when empty, now that their contents are gone.
         for folder in plan.emptyFolders {
-            if Remover.removeIfEmpty(translate(folder), allowedRoot: allowedRoot, home: home) { report.deleted.append(Finding(path: folder, tier: .exact, reason: "empty folder")) }
+            guard let target = emptyTargets[folder] else {
+                report.failed.append((Finding(path: folder, tier: .exact, reason: "empty folder"), "changed since it was checked; left alone"))
+                continue
+            }
+            switch Remover.removeIfEmpty(target, allowedRoot: allowedRoot, home: home) {
+            case .success(true): report.deleted.append(Finding(path: folder, tier: .exact, reason: "empty folder"))
+            case .success(false): report.warnings.append("Left \(Format.path(folder, home: home)): it is not empty.")
+            case let .failure(error): report.failed.append((Finding(path: folder, tier: .exact, reason: "empty folder"), error.message))
+            }
         }
 
-        // 4. Records: installer receipts (root only), Launch Services.
+        // 3. Records: installer receipts (root only), Launch Services.
         if !plan.packages.isEmpty {
             if isRoot {
-                for package in plan.packages { if let error = actions.forgetPackage(package) { report.warnings.append("Couldn't forget receipt \(package): \(error)") } }
+                for package in plan.packages { if let error = actions.forgetPackage(package) { report.actionFailures.append("Couldn't forget receipt \(package): \(error)") } }
             } else {
                 report.warnings.append("The installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", ")) need\(plan.packages.count == 1 ? "s" : "") sudo to forget.")
             }
         }
-        _ = actions.unregister(plan.application.path)
+        if let error = actions.unregister(plan.application.path) {
+            report.actionFailures.append("Couldn't unregister \(plan.application.name.terminalInline) from Launch Services: \(error)")
+        }
         return report
     }
 
@@ -146,6 +142,13 @@ public struct Executor {
             guard let identity = FileIdentity.of(path) else { return nil }
             return (finding, RemovalTarget(path: path, identity: identity))
         }
+    }
+
+    /// Selected findings which disappeared or became impossible to identify before the question.
+    /// They must not be silently omitted: the displayed plan would then differ from the operation
+    /// the user is being asked to approve.
+    public static func unavailableTargets(for findings: [Finding], translate: (String) -> String = { $0 }) -> [Finding] {
+        findings.filter { FileIdentity.of(translate($0.path)) == nil }
     }
 }
 

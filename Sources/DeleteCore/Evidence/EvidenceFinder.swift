@@ -15,6 +15,10 @@ public struct EvidenceFinder: Sendable {
     /// they go with): they don't count as other installed apps, so nothing is kept for them.
     public func plan(for application: InstalledApp, inventory: Inventory, group: Set<String> = [], timing: Timing? = nil) throws(Refusal) -> RemovalPlan {
         if let refusal = Protection.refusal(for: application) { throw refusal }
+        if case let .homebrew(token, true) = application.source,
+           let cask = inventory.casks.first(where: { $0.token == token }), !cask.mayReplicateUninstall {
+            throw Refusal(message: "\(application.name) was installed by Homebrew cask \(token), which has uninstall actions delete cannot yet model exactly (\(cask.unsupportedUninstallArtifacts.joined(separator: ", "))). Nothing was deleted; use Homebrew or the vendor's uninstaller until those actions are supported.")
+        }
         let bundle = URL(filePath: application.bundlePath, directoryHint: .isDirectory)
 
         // Identifiers: the app's, its embedded helpers', and its privileged helper tools' labels.
@@ -26,6 +30,14 @@ public struct EvidenceFinder: Sendable {
         var identifiers: [String] = placeholder == nil ? application.bundleIdentifier.map { [$0] } ?? [] : []
         for identifier in embedded.map(\.identifier) + helperLabels where !Self.isPlaceholder(identifier) && !identifiers.contains(where: { $0.caseInsensitiveCompare(identifier) == .orderedSame }) {
             identifiers.append(identifier)
+        }
+        if case let .homebrew(token, true) = application.source,
+           let cask = inventory.casks.first(where: { $0.token == token }), !cask.quitIdentifiers.isEmpty {
+            let known = Set(identifiers.map { $0.lowercased() })
+            let unknown = cask.quitIdentifiers.filter { !known.contains($0.lowercased()) }
+            guard unknown.isEmpty else {
+                throw Refusal(message: "\(application.name) was installed by Homebrew cask \(token), whose declared quit identifier\(unknown.count == 1 ? "" : "s") \(unknown.joined(separator: ", ")) does not belong to the app or an embedded component. Nothing was deleted; delete will not terminate an unrelated process.")
+            }
         }
         // A helper app installed outside the bundle (iStat Menus keeps its agents' apps in
         // Application Support) shows up as a separate bundle, but a sub-identifier of the app's
@@ -127,7 +139,22 @@ public struct EvidenceFinder: Sendable {
         }
 
         // Launch agents and daemons, and the helpers they run.
-        let launch = LaunchItemScan.scan(roots: roots, bundlePath: application.bundlePath, identifiers: identifiers, helperLabels: helperLabels, ownership: ownership)
+        let cask = {
+            if case let .homebrew(token, true) = application.source { return inventory.casks.first { $0.token == token } }
+            return nil
+        }()
+        // A cask's launchctl label is only a locator, never ownership evidence. The resolved
+        // plist must independently belong to the app through its association, program, or the
+        // complete ownership index.
+        let launch = LaunchItemScan.scan(roots: roots, bundlePath: application.bundlePath, identifiers: identifiers,
+                                          helperLabels: helperLabels, ownership: ownership)
+        if let cask, !cask.launchctlLabels.isEmpty {
+            let found = Set(launch.items.map { $0.label.lowercased() })
+            let missing = cask.launchctlLabels.filter { !found.contains($0.lowercased()) }
+            if !missing.isEmpty {
+                throw Refusal(message: "\(application.name) was installed by Homebrew cask \(cask.token), whose declared launch item\(missing.count == 1 ? "" : "s") \(missing.joined(separator: ", ")) could not be resolved to an installed LaunchAgent or LaunchDaemon plist. Nothing was deleted; delete will not guess how to stop a launchd service.")
+            }
+        }
         launch.findings.forEach { collector.add($0) }
         collector.unreadable += launch.unreadable
 
@@ -199,7 +226,15 @@ public struct EvidenceFinder: Sendable {
 
         // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
         let skipped = collector.skipped.filter { !lowerEmpty.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: packages.packages + coveredPackages,
+        let caskPackages: [String]
+        if let cask {
+            caskPackages = inventory.receipts.listings.keys.filter { identifier in
+                cask.packagePatterns.contains { Caskroom.package(identifier, matches: $0) }
+            }.sorted()
+        } else {
+            caskPackages = []
+        }
+        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: Array(Set(packages.packages + coveredPackages + caskPackages)).sorted(),
                                unreadable: unreadable, notes: notes, running: running, homebrewCask: zap.cask)
         plan.activeSystemExtensions = activeExtensions
         plan.emptyFolders = emptyFolders
@@ -232,15 +267,16 @@ public struct EvidenceFinder: Sendable {
         return identifiers.filter { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + ".") }.max { $0.count < $1.count }
     }
 
-    /// Identifiers embedded in other apps that this app embeds too, checked only in apps of the
-    /// same vendor as each embedded identifier that isn't a sub-identifier of the app's own.
+    /// Identifiers embedded in other apps that this app embeds too.  A helper identifier isn't
+    /// necessarily in the main app's vendor namespace: LibreWolf and Tor Browser, for example,
+    /// both embed `org.mozilla.updater`.  Scan every other installed third-party app rather than
+    /// using the main bundle identifier as a proxy for ownership.
     static func sharedEmbedded(identifiers: [String], main: String?, others: [InstalledApp]) -> [(identifier: String, path: String)] {
         let own = main?.lowercased() ?? ""
         let foreign = identifiers.map { $0.lowercased() }.filter { $0 != own && !$0.hasPrefix(own + ".") }
-        let vendors = Set(foreign.compactMap(vendor))
-        guard !vendors.isEmpty else { return [] }
+        guard !foreign.isEmpty else { return [] }
         let lowerForeign = Set(foreign)
-        let candidates = others.filter { $0.classification != .system && $0.bundleIdentifier.flatMap(vendor).map(vendors.contains) == true }
+        let candidates = others.filter { $0.classification != .system }
         var result: [(identifier: String, path: String)] = []
         for other in candidates {
             for item in EmbeddedBundles.find(in: URL(filePath: other.bundlePath, directoryHint: .isDirectory), mainIdentifier: other.bundleIdentifier) where lowerForeign.contains(item.identifier.lowercased()) {

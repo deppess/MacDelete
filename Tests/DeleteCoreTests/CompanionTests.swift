@@ -87,8 +87,8 @@ final class CompanionTests: XCTestCase {
         XCTAssertTrue(plan.skipped.isEmpty, "\(plan.skipped)")
     }
 
-    /// `brew uninstall` removes every app of a cask: they go together whichever is named, and
-    /// even --no-companions can't keep them.
+    /// A cask's artifacts go together whichever app is named, and even --no-companions can't keep
+    /// a sibling whose declaration says the same cask owns it.
     func testAppsOfOneHomebrewCaskAlwaysGoTogether() throws {
         let system = try FakeSystem()
         try system.makeApp("Viewer.app", metadata: ["CFBundleIdentifier": "net.tool.viewer", "CFBundleName": "Viewer"])
@@ -104,13 +104,13 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(merge.companions.first?.inseparable, true)
         XCTAssertEqual(Companions.find(for: try application("Viewer", in: inventory), inventory: inventory, roots: system.roots, team: { _ in nil }).companions.map(\.application.name), ["Merge"])
 
-        // Planned together, one brew uninstall runs and the other app counts as removed by it.
+        // Planned together, both app bundles are concrete local deletion targets; only shared
+        // cask artifacts are deduplicated.
         let group: Set<String> = [try application("Merge", in: inventory).path, try application("Viewer", in: inventory).path]
         let finder = EvidenceFinder(roots: system.roots)
         let plans = RemovalPlan.deduplicated([try finder.plan(for: try application("Merge", in: inventory), inventory: inventory, group: group),
                                               try finder.plan(for: try application("Viewer", in: inventory), inventory: inventory, group: group)])
-        XCTAssertEqual(plans.map(\.homebrewCask), ["tool", nil])
-        XCTAssertEqual(plans.map(\.removedWithCask), [nil, "tool"])
+        XCTAssertEqual(plans.map(\.homebrewCask), ["tool", "tool"])
     }
 
     /// One receipt installing equal peers has no main app: none takes another. A receipt named
@@ -182,24 +182,21 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(result[1].packages, [])
     }
 
-    /// Deleting a cask's helper runs brew uninstall, which removes the cask's main app too: that
-    /// app's privacy permissions are reset before, while tccutil can still find it.
-    func testAppsBrewRemovesHavePrivacyResetFirst() throws {
+    /// Local cask replication resets every app's privacy permissions while its own bundle still
+    /// exists; it never invokes Homebrew as a side effect.
+    func testCaskAppsResetPrivacyLocally() throws {
         func plan(_ name: String) -> RemovalPlan {
             RemovalPlan(application: app(name, id: "com.vendor.\(name.lowercased())", path: "/Applications/\(name).app"), identifiers: ["com.vendor.\(name.lowercased())"], findings: [],
                         skipped: [], launchItems: [], packages: [], unreadable: [], notes: [], running: false, homebrewCask: "suite")
         }
         let plans = RemovalPlan.deduplicated([plan("Helper"), plan("Suite")])
-        XCTAssertEqual(plans[1].removedWithCask, "suite")
         let actions = RecordingSystemActions()
         let system = try FakeSystem()
         let cask = InstalledCask(token: "suite", prefix: system.homebrew.path, version: "1.0", appPaths: [], suitePaths: [], packagePatterns: [])
         _ = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(group: plans, targets: [[], []], isRoot: false, casks: [cask])
         let log = actions.recorded
-        let brew = try XCTUnwrap(log.firstIndex(of: "brew uninstall --cask suite"))
-        XCTAssertLessThan(try XCTUnwrap(log.firstIndex(of: "tccutil reset All com.vendor.suite")), brew)
-        XCTAssertLessThan(try XCTUnwrap(log.firstIndex(of: "tccutil reset All com.vendor.helper")), brew)
         XCTAssertEqual(log.filter { $0.hasPrefix("tccutil") }.count, 2, "each app's permissions are reset once")
+        XCTAssertFalse(log.contains { $0.hasPrefix("brew uninstall") })
     }
 
     func testFingerprintChangesWithWhatIsDeleted() {

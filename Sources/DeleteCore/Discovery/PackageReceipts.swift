@@ -5,6 +5,15 @@ import Foundation
 /// (`lsbom -s`), in parallel, while the apps are scanned (~35 ms for every package on a typical
 /// Mac); plans then look things up here instead of running `lsbom` or `pkgutil` again.
 public struct PackageReceipts: Sendable {
+    private struct ListingError: Error, LocalizedError {
+        var message: String
+        var errorDescription: String? { message }
+    }
+    public struct Scan: Sendable {
+        public var receipts: PackageReceipts
+        public var warnings: [String]
+        public var complete: Bool { warnings.isEmpty }
+    }
     /// Package identifiers by lowercased bundle path (APFS is case-insensitive by default).
     public var packagesByApplication: [String: [String]]
     /// Every absolute path each package lists, by package identifier.
@@ -34,39 +43,64 @@ public struct PackageReceipts: Sendable {
     /// Apple's own packages are skipped: App Store installs of Apple apps leave receipts too
     /// (Xcode's BOM alone is 41 MB), and those apps are identified by their App Store receipt.
     public static func read(directory: URL, runner: CommandRunner = CommandRunner(), lsbom: URL = URL(filePath: "/usr/bin/lsbom")) -> PackageReceipts {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return PackageReceipts() }
+        scan(directory: directory, runner: runner, lsbom: lsbom).receipts
+    }
+
+    public static func scan(directory: URL, runner: CommandRunner = CommandRunner(), lsbom: URL = URL(filePath: "/usr/bin/lsbom")) -> Scan {
+        guard case let .success(names) = Directory.names(atPath: directory.path) else {
+            return Scan(receipts: PackageReceipts(), warnings: ["Unable to read installer receipts: \(directory.path)"])
+        }
+        var warnings: [String] = []
         let receipts: [(identifier: String, prefix: String, bom: URL)] = names.filter { $0.hasSuffix(".plist") }.sorted().compactMap { name in
             let plist = directory.appending(path: name)
-            guard let info = SmallFile.plist(atPath: plist.path) else { return nil }
+            guard let info = SmallFile.plist(atPath: plist.path) else {
+                warnings.append("Unable to read installer receipt: \(plist.path)")
+                return nil
+            }
             let identifier = (info["PackageIdentifier"] as? String) ?? String(name.dropLast(".plist".count))
             guard !identifier.lowercased().hasPrefix("com.apple.") else { return nil }
             let bom = directory.appending(path: String(name.dropLast(".plist".count)) + ".bom")
-            guard FileManager.default.fileExists(atPath: bom.path) else { return nil }
+            guard FileManager.default.fileExists(atPath: bom.path) else {
+                warnings.append("Installer receipt \(identifier) has no BOM: \(bom.path)")
+                return nil
+            }
             return (identifier, (info["InstallPrefixPath"] as? String) ?? "/", bom)
         }
-        let results = UnsafeResults<([String], Set<String>)>(count: receipts.count)
+        let results = UnsafeResults<(paths: [String], lowered: Set<String>, warning: String?)>(count: receipts.count)
         DispatchQueue.concurrentPerform(iterations: receipts.count) { index in
             let receipt = receipts[index]
-            let paths = listing(bom: receipt.bom, installPrefix: receipt.prefix, runner: runner, lsbom: lsbom)
-            results[index] = (paths, Set(paths.map { $0.lowercased() }))
+            switch listingResult(bom: receipt.bom, installPrefix: receipt.prefix, runner: runner, lsbom: lsbom) {
+            case let .success(paths): results[index] = (paths, Set(paths.map { $0.lowercased() }), nil)
+            case let .failure(message): results[index] = ([], [], "Unable to list installer receipt \(receipt.identifier): \(message)")
+            }
         }
         var map: [String: [String]] = [:]
         var listings: [String: [String]] = [:]
         var lowercased: [String: Set<String>] = [:]
-        for (receipt, (paths, lowered)) in zip(receipts, results.values) {
+        for (receipt, result) in zip(receipts, results.values) {
+            if let warning = result.warning { warnings.append(warning); continue }
+            let (paths, lowered) = (result.paths, result.lowered)
             (listings[receipt.identifier], lowercased[receipt.identifier]) = (paths, lowered)
             for path in applicationPaths(paths) where !(map[path.lowercased()]?.contains(receipt.identifier) ?? false) {
                 map[path.lowercased(), default: []].append(receipt.identifier)
             }
         }
-        return PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased)
+        return Scan(receipts: PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased), warnings: warnings)
     }
 
     /// The absolute paths a BOM lists, or none when it can't be read.
     static func listing(bom: URL, installPrefix: String, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> [String] {
-        guard let result = try? runner.run(executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024),
-              result.status == 0 else { return [] }
-        return paths(bomOutput: result.stdout, installPrefix: installPrefix, excludingInside: excluded)
+        (try? listingResult(bom: bom, installPrefix: installPrefix, runner: runner, lsbom: lsbom, excludingInside: excluded).get()) ?? []
+    }
+
+    private static func listingResult(bom: URL, installPrefix: String, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> Result<[String], ListingError> {
+        do {
+            let result = try runner.run(executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024)
+            guard result.status == 0 else { return .failure(ListingError(message: "lsbom exited \(result.status)")) }
+            return .success(paths(bomOutput: result.stdout, installPrefix: installPrefix, excludingInside: excluded))
+        } catch {
+            return .failure(ListingError(message: error.localizedDescription))
+        }
     }
 
     /// Absolute paths from `lsbom -s` output, resolved against the receipt's install prefix,
