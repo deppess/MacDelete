@@ -11,6 +11,8 @@
 #                               installs two apps, which delete must remove together
 #   Scripts/testapps shared     DeleteTest Shared + DeleteTest Shared Pro: two sandboxed apps sharing
 #                               an app group, one identifier a prefix of the other's
+#   Scripts/testapps validate   install every disposable case, delete each with the candidate
+#                               binary, verify the result, then clean up (prompts for sudo)
 #   Scripts/testapps all        plain, brew, suite and shared (package needs your password: separate)
 #   Scripts/testapps check      what's left of each test app, and what must survive
 #   Scripts/testapps untap      removes the local Homebrew tap once the Homebrew test apps are gone
@@ -89,6 +91,65 @@ if [[ $command == all ]]; then
     exit 0
 fi
 case $command in
+validate)
+    # This is deliberately the one end-to-end destructive test entry point. It refuses to
+    # overwrite a previous test run: an interrupted run stays inspectable until the user removes
+    # it with delete and Scripts/testapps clean.
+    for app in "$HOME"/Applications/DeleteTest*.app(N) /Applications/DeleteTest*.app(N); do
+        print -u2 "${app:t:r} is already installed; inspect it, delete it, and run Scripts/testapps clean before validating again."
+        exit 1
+    done
+    for token in deletetest-brew deletetest-suite; do
+        if brew list --cask "$token" >/dev/null 2>&1; then
+            print -u2 "The $token cask is already installed; inspect it, delete its app, and run Scripts/testapps clean before validating again."
+            exit 1
+        fi
+    done
+    if pkgutil --pkg-info com.macdelete.test.pkg >/dev/null 2>&1; then
+        print -u2 "DeleteTest Package's receipt already exists; inspect it, delete the app, and run Scripts/testapps clean before validating again."
+        exit 1
+    fi
+
+    # All artifacts below have the com.macdelete.test identifier or a DeleteTest name and are
+    # created by this script. The package install is the only password prompt; delete's later
+    # automatic sudo rerun validates the root-owned uninstall path.
+    "$0" all
+    "$0" package
+    sudo installer -pkg "$out/DeleteTestPackage.pkg" -target /
+    open -g "/Applications/DeleteTest Package.app"
+    sleep 1
+
+    swift build -c release --package-path "$project" --product delete >/dev/null
+    bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
+    for app in "DeleteTest Plain" "DeleteTest Brew" "DeleteTest Suite" "DeleteTest Shared"; do
+        "$bin" -y "$app"
+    done
+    # The first shared app must leave its group for the Pro app. Check it before deleting Pro.
+    [[ -d "$library/Group Containers/group.com.macdelete.test.shared" ]] || {
+        print -u2 "Shared app group was removed while DeleteTest Shared Pro still uses it."
+        exit 1
+    }
+    "$bin" -y "DeleteTest Shared Pro"
+    "$bin" -y "DeleteTest Package"
+
+    check=$("$0" check)
+    print -r -- "$check"
+    if [[ $check == *$'  LEFT   '* || $check == *$'  WRONG  '* ]]; then
+        print -u2 "Disposable validation left artifacts behind. They were kept for inspection."
+        exit 1
+    fi
+    if sudo launchctl print system/com.macdelete.test.pkg.daemon >/dev/null 2>&1; then
+        print -u2 "DeleteTest Package's launch daemon is still loaded. Artifacts were kept for inspection."
+        exit 1
+    fi
+    if pkgutil --pkg-info com.macdelete.test.pkg >/dev/null 2>&1; then
+        print -u2 "DeleteTest Package's receipt still exists. Artifacts were kept for inspection."
+        exit 1
+    fi
+    "$0" untap
+    "$0" clean
+    print "Disposable validation passed."
+    ;;
 plain)
     app="$HOME/Applications/DeleteTest Plain.app"
     mkdir -p "$HOME/Applications" "$library/LaunchAgents"
@@ -336,7 +397,7 @@ untap)
     brew untap "$tap" && print "Removed the $tap tap."
     ;;
 *)
-    print -u2 "usage: Scripts/testapps plain | brew | package | suite | shared | all | check | untap | clean"
+    print -u2 "usage: Scripts/testapps validate | plain | brew | package | suite | shared | all | check | untap | clean"
     exit 2
     ;;
 esac

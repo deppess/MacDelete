@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: macOS test and release build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Show toolchain
+        run: swift --version
+      - name: Run tests
+        run: swift test
+      - name: Check delete safety guard
+        run: .claude/hooks/test-guard-delete.sh
+      - name: Build release binary
+        run: swift build -c release --product delete
+      - name: Check whitespace
+        run: git diff --check HEAD^

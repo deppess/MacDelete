@@ -189,7 +189,7 @@ final class FinderTests: XCTestCase {
         let names = Set(plan.findings.filter { $0.tier == .name }.map { $0.path.replacingOccurrences(of: system.home.path + "/", with: "~/") })
         XCTAssertEqual(names, ["~/Library/Application Support/Example", "~/Library/Caches/example", "~/.config/example", "~/.example", "~/Library/Logs/DiagnosticReports/Example-2026-10-26-101010.ips",
                                "~/Library/Logs/Example.log", "~/Library/Logs/Example 2", "~/Library/Preferences/example.plist"])
-        XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact })
+        XCTAssertEqual(Set(plan.selected().map(\.path)), Set(plan.findings.map(\.path)))
         let agentPlan = try system.plan("Agent")
         XCTAssertFalse(agentPlan.findings.contains { $0.tier == .name }, "\"Agent\" is too generic to be evidence")
     }
@@ -500,13 +500,13 @@ final class HomebrewZapTests: XCTestCase {
         XCTAssertEqual(Set(plan.emptyFolders), [system.home.appending(path: ".example").path, support.appending(path: "Vendor").path, support.appending(path: "Lonely").path])
 
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected()), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: ".example/history.jsonl").path), "a folder with contents stays")
         XCTAssertTrue(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Other Product/data").path), "another product's data stays")
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Vendor/Example").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appending(path: "Lonely").path), "emptied by the zap list, so it goes")
-        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("removes 3 folders once they're empty"))
+        XCTAssertTrue(PlanRenderer.text(plan, isRoot: false, home: system.home).contains("removes 3 folders once they're empty"))
     }
 
     func testRemoveIfEmptyLeavesContentsLinksAndStandardFolders() throws {
@@ -614,7 +614,7 @@ final class SteamAndAppleTests: XCTestCase {
             XCTAssertEqual(plan.skipped.contains { $0.path.hasSuffix("common/Game") && $0.reason.hasPrefix("Game is installed") }, withGame)
 
             let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-                .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
+                .run(plan, targets: Executor.targets(for: plan.selected()), emptyTargets: Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { path in FileIdentity.of(path).map { (path, RemovalTarget(path: path, identity: $0)) } }), isRoot: false, casks: [])
             XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
             let folder = system.root.appending(path: steam).path
             if withGame {
@@ -638,7 +638,7 @@ final class SteamAndAppleTests: XCTestCase {
         try system.touch("\(steam)/SteamApps/shadercache/x")
 
         let plan = try system.plan("Steam")
-        let selected = plan.selected(includeNameMatches: true).map { $0.path.replacingOccurrences(of: system.root.path + "/", with: "") }
+        let selected = plan.selected().map { $0.path.replacingOccurrences(of: system.root.path + "/", with: "") }
         XCTAssertFalse(selected.contains { $0.hasSuffix("/SteamApps") || $0.contains("SteamApps/common") || $0.hasSuffix("appmanifest_42.acf") }, "\(selected)")
         XCTAssertTrue(selected.contains("\(steam)/SteamApps/shadercache"))
         XCTAssertTrue(selected.contains("\(steam)/Steam.AppBundle"))
@@ -675,25 +675,25 @@ final class PlanRendererTests: XCTestCase {
         let plan = RemovalPlan(application: application, identifiers: ["com.example.app"], findings: [exact, support, daemon, named],
                                skipped: [Skipped(path: "/Users/tester/Library/Group Containers/T.group", reason: "app group shared with Other")],
                                launchItems: [LaunchItem(label: "com.example.app.daemon", plist: daemon.path, domain: .system)], packages: [], unreadable: [], notes: [], running: false, homebrewCask: nil)
-        let text = PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: URL(filePath: "/Users/tester"))
+        let text = PlanRenderer.text(plan, isRoot: false, home: URL(filePath: "/Users/tester"))
         XCTAssertEqual(text, """
-        Example   1.0   310 MB   (Download)
+        Example   1.0   313 MB   (Download)
 
           /Applications/Example.app                            298 MB
           ~/Library/Application Support/com.example.app         12 MB
+          ~/Library/Application Support/Example                3.0 MB   name-derived; named after the app
 
           Needs administrator rights (run with sudo to include these):
           /Library/LaunchDaemons/com.example.app.daemon.plist    4 KB   launch daemon
-
-          Not included (matched by name only; add with --include-name-matches):
-          ~/Library/Application Support/Example                3.0 MB   named after the app
 
           Kept:
           ~/Library/Group Containers/T.group   app group shared with Other
 
           Also: stops 1 launch item first; resets its privacy permissions.
+
+          Note: Name-derived items are lower-confidence matches. Review them carefully before confirming.
         """)
-        XCTAssertEqual(PlanRenderer.question([plan], includeNameMatches: false, isRoot: false), "Permanently delete 2 items (310 MB)? [y/N] ")
-        XCTAssertEqual(PlanRenderer.question([plan], includeNameMatches: true, isRoot: true), "Permanently delete 4 items (313 MB)? [y/N] ")
+        XCTAssertEqual(PlanRenderer.question([plan], isRoot: false), "Permanently delete 3 items (313 MB)? [y/N] ")
+        XCTAssertEqual(PlanRenderer.question([plan], isRoot: true), "Permanently delete 4 items (313 MB)? [y/N] ")
     }
 }

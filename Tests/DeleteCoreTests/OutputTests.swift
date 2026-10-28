@@ -49,10 +49,11 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(listing.json && listing.all)
         let removal = try Invocation(arguments: ["Raycast", "--dry-run", "-y"])
         XCTAssertEqual(removal.command, .remove("Raycast"))
-        XCTAssertTrue(removal.dryRun && removal.assumeYes && removal.includeNameMatches)
+        XCTAssertTrue(removal.dryRun && removal.assumeYes)
         XCTAssertEqual(try Invocation(arguments: ["--", "list"]).command, .remove("list"), "an app named list")
         XCTAssertEqual(try Invocation(arguments: ["list", "--help"]).command, .help)
         XCTAssertThrowsError(try Invocation(arguments: ["list", "Raycast"]))
+        XCTAssertThrowsError(try Invocation(arguments: ["Raycast", "--include-name-matches"]))
         XCTAssertThrowsError(try Invocation(arguments: ["list", "-y"]))
         XCTAssertThrowsError(try Invocation(arguments: ["Raycast", "Slack"]))
         XCTAssertThrowsError(try Invocation(arguments: ["Raycast", "--all"]))
@@ -97,7 +98,7 @@ final class CLITests: XCTestCase {
         try system.touch("Users/tester/Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json")
         try system.writeJSON(["path": system.applications.appending(path: "Example.app/Contents/MacOS/proxy").path], to: system.home.appending(path: "Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json"))
         let plan = try system.plan("Example")
-        let rows = { (width: Int?) in PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home, width: width).split(separator: "\n").filter { $0.hasPrefix("  /") || $0.hasPrefix("  ~") } }
+        let rows = { (width: Int?) in PlanRenderer.text(plan, isRoot: false, home: system.home, width: width).split(separator: "\n").filter { $0.hasPrefix("  /") || $0.hasPrefix("  ~") } }
         let sizeColumns = Set(rows(nil).map { row in row.range(of: " KB")?.lowerBound.utf16Offset(in: row) ?? row.range(of: " B")?.lowerBound.utf16Offset(in: row) ?? -1 })
         XCTAssertEqual(sizeColumns.count, 1, "aligned: \(rows(nil))")
         XCTAssertTrue(rows(60).contains { $0.count > 60 }, "a long path runs past a narrow terminal rather than being cut")

@@ -5,12 +5,11 @@ public enum PlanRenderer {
     /// kept items, other actions, notes.
     /// `width` is the terminal's, when output goes to one: paths are aligned to the longest that
     /// still leaves room for the sizes. Otherwise (a file, a pipe) every path is aligned.
-    public static func text(_ plan: RemovalPlan, includeNameMatches: Bool, isRoot: Bool, home: URL, width: Int? = nil) -> String {
-        let (deleting, needingRoot) = plan.split(includeNameMatches: includeNameMatches, isRoot: isRoot)
-        let nameOnly = includeNameMatches ? [] : plan.findings.filter { $0.tier == .name }
+    public static func text(_ plan: RemovalPlan, isRoot: Bool, home: URL, width: Int? = nil) -> String {
+        let (deleting, needingRoot) = plan.split(isRoot: isRoot)
 
         // One set of column widths for every listed item, so sizes line up across sections.
-        let listed = deleting + needingRoot + nameOnly
+        let listed = deleting + needingRoot
         let sizeWidth = listed.map { size($0).count }.max() ?? 0
         let longest = listed.map { display($0.path, home: home).terminalDisplayWidth }.max() ?? 0
         let pathWidth = width.map { min(longest, max(40, $0 - sizeWidth - 6)) } ?? longest
@@ -19,7 +18,9 @@ public enum PlanRenderer {
             let padding = String(repeating: " ", count: max(2, pathWidth - path.terminalDisplayWidth + 2))
             let sizeText = size(finding)
             let line = "  " + path + padding + String(repeating: " ", count: sizeWidth - sizeText.count) + sizeText
-            return finding.reason.map { line + "   " + $0.terminalInline } ?? line
+            guard let reason = finding.reason else { return line }
+            let evidence = finding.tier == .name ? "name-derived; \(reason)" : reason
+            return line + "   " + evidence.terminalInline
         }
 
         let application = plan.application
@@ -33,9 +34,6 @@ public enum PlanRenderer {
             lines += ["", "  \(application.name.terminalInline) itself needs administrator rights, so all of this needs sudo:"] + ordered(needingRoot, plan: plan).map(row)
         } else if !needingRoot.isEmpty {
             lines += ["", "  Needs administrator rights (run with sudo to include these):"] + needingRoot.map(row)
-        }
-        if !nameOnly.isEmpty {
-            lines += ["", "  Not included (matched by name only; add with --include-name-matches):"] + nameOnly.map(row)
         }
         if !plan.skipped.isEmpty {
             // Reasons aligned among themselves (kept items have no size column).
@@ -57,6 +55,9 @@ public enum PlanRenderer {
         if !also.isEmpty { lines += ["", "  Also: " + also.joined(separator: "; ") + "."] }
 
         var notes = plan.notes
+        if plan.findings.contains(where: { $0.tier == .name }) {
+            notes.insert("Name-derived items are lower-confidence matches. Review them carefully before confirming.", at: 0)
+        }
         if plan.running { notes.insert("\(application.name.terminalInline) is running; it will be asked to quit first.", at: 0) }
         if !plan.unreadable.isEmpty {
             notes.append("Couldn't read \(count(plan.unreadable.count, "folder")) (\(plan.unreadable.prefix(3).map { display($0, home: home) }.joined(separator: ", "))\(plan.unreadable.count > 3 ? ", …" : "")). Grant Full Disk Access to your terminal (System Settings › Privacy & Security) to see everything.")
@@ -67,14 +68,14 @@ public enum PlanRenderer {
 
     /// An app's plan, then its companions' (apps installed with it, deleted with it), each with
     /// why it goes too. `reasons` are by app path.
-    public static func text(_ plans: [RemovalPlan], reasons: [String: String], includeNameMatches: Bool, isRoot: Bool, home: URL, width: Int? = nil) -> String {
+    public static func text(_ plans: [RemovalPlan], reasons: [String: String], isRoot: Bool, home: URL, width: Int? = nil) -> String {
         guard let main = plans.first else { return "" }
-        var parts = [text(main, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width)]
+        var parts = [text(main, isRoot: isRoot, home: home, width: width)]
         if plans.count > 1 {
             let keepable = plans.dropFirst().contains { $0.homebrewCask == nil }
             parts.append("Installed with \(main.application.name.terminalInline), so deleted with it\(keepable ? " (keep \(plans.count == 2 ? "it" : "them") with --no-companions)" : ""):")
             for plan in plans.dropFirst() {
-                var lines = text(plan, includeNameMatches: includeNameMatches, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
+                var lines = text(plan, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
                 if let reason = reasons[plan.application.path] { lines[0] += "   " + reason.terminalInline }
                 parts.append(lines.joined(separator: "\n"))
             }
@@ -84,12 +85,12 @@ public enum PlanRenderer {
 
     /// The confirmation question for an app and its companions, or nil when there's nothing to
     /// delete.
-    public static func question(_ plans: [RemovalPlan], includeNameMatches: Bool, isRoot: Bool) -> String? {
-        let deleting = plans.flatMap { $0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting }
+    public static func question(_ plans: [RemovalPlan], isRoot: Bool) -> String? {
+        let deleting = plans.flatMap { $0.split(isRoot: isRoot).deleting }
         let conditionalFolders = plans.flatMap(\.emptyFolders)
         guard !deleting.isEmpty || !conditionalFolders.isEmpty else { return nil }
         let total = deleting.reduce(Int64(0)) { $0 + $1.size }
-        let apps = plans.filter { !$0.split(includeNameMatches: includeNameMatches, isRoot: isRoot).deleting.isEmpty }.count
+        let apps = plans.filter { !$0.split(isRoot: isRoot).deleting.isEmpty }.count
         let nounCount = deleting.count + conditionalFolders.count
         let suffix = conditionalFolders.isEmpty ? " (\(Format.size(total)))" : " including \(count(conditionalFolders.count, "empty folder")) if still empty"
         return "Permanently delete \(count(nounCount, "item"))\(apps > 1 ? " of \(apps) apps" : "")\(suffix)? [y/N] "

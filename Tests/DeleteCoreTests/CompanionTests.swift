@@ -202,12 +202,11 @@ final class CompanionTests: XCTestCase {
     func testFingerprintChangesWithWhatIsDeleted() {
         var plan = RemovalPlan(application: app("Main", id: "com.vendor.main", path: "/Applications/Main.app"), identifiers: [], findings: [Finding(path: "/Applications/Main.app", tier: .exact)],
                                skipped: [], launchItems: [], packages: [], unreadable: [], notes: [], running: false, homebrewCask: nil)
-        let before = RemovalPlan.fingerprint([plan], includeNameMatches: false)
+        let before = RemovalPlan.fingerprint([plan])
         plan.findings.append(Finding(path: "/Users/me/.main", tier: .name))
-        XCTAssertEqual(RemovalPlan.fingerprint([plan], includeNameMatches: false), before, "a name match not selected changes nothing")
-        XCTAssertNotEqual(RemovalPlan.fingerprint([plan], includeNameMatches: true), before)
+        XCTAssertNotEqual(RemovalPlan.fingerprint([plan]), before, "every displayed finding changes the approval")
         plan.packages = ["com.vendor.pkg"]
-        XCTAssertNotEqual(RemovalPlan.fingerprint([plan], includeNameMatches: false), before)
+        XCTAssertNotEqual(RemovalPlan.fingerprint([plan]), before)
     }
 
     func testCompanionAndSudoRerunOptions() throws {

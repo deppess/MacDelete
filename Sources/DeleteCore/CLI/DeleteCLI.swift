@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 public enum DeleteCLI {
-    public static let version = "1.0.0"
+    public static let version = "2.0.0"
 
     public static let usage = """
     Usage:
@@ -121,10 +121,16 @@ public enum DeleteCLI {
         func makePlans() throws(Refusal) -> [RemovalPlan] {
             // The companions' plans are made while the app's is.
             let companionPlans = companions.map { companion in
-                Concurrent { () -> RemovalPlan? in
+                Concurrent { () -> Result<RemovalPlan, Refusal> in
                     var other = companion.application
                     other.source = Inventory.source(of: other, casks: inventory.casks, receipts: inventory.receipts)
-                    return try? finder.plan(for: other, inventory: inventory, group: group)
+                    do {
+                        return .success(try finder.plan(for: other, inventory: inventory, group: group))
+                    } catch let error as Refusal {
+                        return .failure(error)
+                    } catch {
+                        return .failure(Refusal(message: error.localizedDescription))
+                    }
                 }
             }
             var main = try finder.plan(for: application, inventory: inventory, group: group, timing: timing)
@@ -135,7 +141,17 @@ public enum DeleteCLI {
             if !found.sameDeveloper.isEmpty {
                 main.notes.append("Also by the same developer, not included: \(found.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
             }
-            let plans = [main] + companionPlans.compactMap(\.value)
+            let results = companionPlans.map { $0.value }
+            if let failure = results.first(where: {
+                if case .failure = $0 { return true }
+                return false
+            }), case let .failure(error) = failure {
+                throw Refusal(message: "Couldn't safely plan the companion app: \(error.message)")
+            }
+            let plans = [main] + results.compactMap { result in
+                if case let .success(plan) = result { return plan }
+                return nil
+            }
             // A companion whose every item another plan already deletes (a helper inside a folder
             // the app's package installed) has nothing left to show.
             let distinct = RemovalPlan.deduplicated(plans).enumerated().filter { $0.offset == 0 || !$0.element.findings.isEmpty || !$0.element.packages.isEmpty || !$0.element.launchItems.isEmpty }.map(\.element)
@@ -149,11 +165,11 @@ public enum DeleteCLI {
         timing?.mark("find leftovers")
         func elevates(_ plans: [RemovalPlan]) -> Bool {
             sandbox == nil && !isRoot && plans.contains {
-                $0.needsRoot(includeNameMatches: invocation.includeNameMatches) || $0.emptyFolders.contains(where: Remover.needsRoot)
+                $0.needsRoot() || $0.emptyFolders.contains(where: Remover.needsRoot)
             }
         }
         func render(_ plans: [RemovalPlan], asRoot: Bool) -> String {
-            PlanRenderer.text(plans, reasons: reasons, includeNameMatches: invocation.includeNameMatches, isRoot: asRoot, home: roots.home, width: terminalWidth)
+            PlanRenderer.text(plans, reasons: reasons, isRoot: asRoot, home: roots.home, width: terminalWidth)
         }
 
         if invocation.dryRun {
@@ -166,7 +182,7 @@ public enum DeleteCLI {
             }
             let elevate = elevates(plans)
             print(render(plans, asRoot: isRoot || elevate))
-            let hint = elevate ? " Deleting it needs administrator rights; delete will ask for your password." : sandbox != nil && plans.contains { $0.needsRoot(includeNameMatches: invocation.includeNameMatches) } ? " Some of it needs administrator rights." : ""
+            let hint = elevate ? " Deleting it needs administrator rights; delete will ask for your password." : sandbox != nil && plans.contains { $0.needsRoot() } ? " Some of it needs administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
         }
@@ -212,7 +228,7 @@ public enum DeleteCLI {
         let asRoot = isRoot || elevate
         // What's deleted must be what was shown: identities are taken before asking. A finding
         // that vanished here must not silently drop out of `targets`; make a fresh plan instead.
-        let selected = plans.map { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).deleting }
+        let selected = plans.map { $0.split(isRoot: asRoot).deleting }
         let translator: (String) -> String
         if let sandbox { translator = { sandbox.translate($0) } } else { translator = { $0 } }
         let unavailable = selected.flatMap { Executor.unavailableTargets(for: $0, translate: translator) }
@@ -221,6 +237,13 @@ public enum DeleteCLI {
             return EXIT_FAILURE
         }
         let targets = selected.map { Executor.targets(for: $0, translate: translator) }
+        let launchCaptures = plans.map { Executor.launchTargets(for: $0.launchItems, translate: translator) }
+        let launchTargets = launchCaptures.map(\.targets)
+        let missingLaunchItems = launchCaptures.flatMap(\.unavailable)
+        guard missingLaunchItems.isEmpty || sandbox != nil else {
+            printError("A launch item changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingLaunchItems.map(\.plist).sorted().map { "  \(Format.path($0, home: roots.home))" }.joined(separator: "\n"))
+            return EXIT_FAILURE
+        }
         let receiptCaptures = plans.map { Executor.receiptTargets(for: $0.packages, receipts: inventory.receipts) }
         let receiptTargets = receiptCaptures.map(\.targets)
         let missingReceipts = receiptCaptures.flatMap(\.unavailable)
@@ -247,25 +270,21 @@ public enum DeleteCLI {
                 approvalIdentities["receipt:\(package):bom"] = targets.bom.identity
             }
         }
-        for items in emptyTargets { for (path, target) in items { approvalIdentities["rmdir:\(path)"] = target.identity } }
-        for plan in plans {
-            for item in plan.launchItems {
-                guard let identity = FileIdentity.of(translator(item.plist)) else {
-                    printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n  \(Format.path(item.plist, home: roots.home))")
-                    return EXIT_FAILURE
-                }
-                approvalIdentities["launchctl:\(item.domain.rawValue):\(item.plist)"] = identity
+        for records in launchTargets {
+            for (key, target) in records {
+                approvalIdentities["launchctl:\(key)"] = target.target.identity
             }
         }
-        let fingerprint = RemovalPlan.fingerprint(plans, includeNameMatches: invocation.includeNameMatches, identities: approvalIdentities)
+        for items in emptyTargets { for (path, target) in items { approvalIdentities["rmdir:\(path)"] = target.identity } }
+        let fingerprint = RemovalPlan.fingerprint(plans, identities: approvalIdentities)
         // Delete's rerun under sudo goes ahead without asking when it found what was confirmed.
         let confirmed = invocation.approved == fingerprint
         if let approved = invocation.approved, !confirmed, !approved.isEmpty {
             print("With administrator rights, more turned up; this is the whole plan now:\n")
         }
         if !confirmed { print(render(plans, asRoot: asRoot)) }
-        guard let question = PlanRenderer.question(plans, includeNameMatches: invocation.includeNameMatches, isRoot: asRoot) else {
-            if plans[0].appNeedsRoot(isRoot: asRoot) || plans.contains(where: { !$0.split(includeNameMatches: invocation.includeNameMatches, isRoot: asRoot).needingRoot.isEmpty }) {
+        guard let question = PlanRenderer.question(plans, isRoot: asRoot) else {
+            if plans[0].appNeedsRoot(isRoot: asRoot) || plans.contains(where: { !$0.split(isRoot: asRoot).needingRoot.isEmpty }) {
                 printError("\nEverything here needs administrator rights, which a sandbox run doesn't have, so nothing was deleted.")
             } else {
                 printError("\nNothing is selected to delete.")
@@ -283,10 +302,10 @@ public enum DeleteCLI {
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, receiptTargets: receiptTargets, isRoot: isRoot, casks: inventory.casks)
+        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, launchTargets: launchTargets, receiptTargets: receiptTargets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
-        let needingRoot = plans.flatMap { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot }
+        let needingRoot = plans.flatMap { $0.split(isRoot: isRoot).needingRoot }
         if !needingRoot.isEmpty, report.stopped == nil {
             print("\n\(needingRoot.count) item\(needingRoot.count == 1 ? "" : "s") need administrator rights, which a sandbox run doesn't have.")
         }
@@ -363,10 +382,6 @@ struct Invocation {
     var json = false
     var dryRun = false
     var assumeYes = false
-    /// Name-derived findings are part of every normal deletion plan. The field remains so the
-    /// plan model can distinguish their lower-confidence origin and old approved reruns remain
-    /// parseable; `--include-name-matches` is accepted as a compatibility no-op.
-    var includeNameMatches = true
     var withCompanions = true
     /// Set by delete's own rerun under sudo: the fingerprint of the plan that was confirmed.
     var approved: String?
@@ -394,7 +409,6 @@ struct Invocation {
             case "--json": json = true
             case "--dry-run", "-n": dryRun = true
             case "-y", "--yes": assumeYes = true
-            case "--include-name-matches": includeNameMatches = true
             case "--no-companions": withCompanions = false
             case "--approved":
                 guard let value = remaining.popFirst(), !value.hasPrefix("-") else { throw UsageError("--approved takes a fingerprint.") }

@@ -54,8 +54,10 @@ Scripts/sandbox run "FL Studio 2026" -y    # really deletes the clones; system a
 Scripts/sandbox-all                        # sandbox-deletes every installed app in turn and checks each result
 Scripts/testapps plain | brew | package    # disposable test apps: plain download, Homebrew cask, installer package
 Scripts/testapps suite | shared | all      # a two-app cask, two apps sharing an app group; all but package
+Scripts/testapps validate                   # every disposable case, including the sudo package path
 Scripts/testapps check                     # after deleting them: anything left behind, and what must survive
 Scripts/testapps clean                     # then: remove the disposable-app builds
 ```
 
-GPL-3.0-or-later. See `NOTICE` for code taken from Sift and Mole.
+GPL-3.0-or-later. See [`COPYING`](COPYING) for the license, [`NOTICE`](NOTICE) for code taken
+from Sift and Mole, and [`CHANGELOG.md`](CHANGELOG.md) for release history.

@@ -25,6 +25,12 @@ public struct Executor {
         public var plist: RemovalTarget
         public var bom: RemovalTarget
     }
+    /// A launchd plist identity confirmed before `launchctl bootout`. The launch label was proven
+    /// during planning; this prevents a replacement plist being acted on after confirmation.
+    public struct LaunchTarget: Sendable, Equatable {
+        public var item: LaunchItem
+        public var target: RemovalTarget
+    }
     public let actions: SystemActions
     /// Every target must lie inside this folder ("/" for a real run, the sandbox otherwise).
     public let allowedRoot: String
@@ -41,12 +47,42 @@ public struct Executor {
     }
 
     /// An app and its companions (`plans[0]` is the app). Companions go first, then the app.
-    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], launchTargets: [[String: LaunchTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
         let conditional = emptyTargets.count == plans.count ? emptyTargets : Array(repeating: [:], count: plans.count)
+        let launches = launchTargets.count == plans.count ? launchTargets : plans.map { Self.launchTargets(for: $0.launchItems, translate: translate).targets }
         let receipts = receiptTargets.count == plans.count ? receiptTargets : Array(repeating: [:], count: plans.count)
+
+        // No companion may be removed until every launch item in the whole group was both
+        // identity-checked and stopped. Otherwise a later bootout failure could leave a suite
+        // partly deleted, or a replacement plist could be handed to launchctl.
+        for index in plans.indices {
+            for item in plans[index].launchItems {
+                let key = Self.launchKey(item)
+                guard let launch = launches[index][key] else {
+                    report.stopped = "Couldn't verify launch item \(item.label): it was unavailable when the plan was confirmed. Nothing was deleted."
+                    return report
+                }
+                guard FileIdentity.of(launch.target.path) == launch.target.identity else {
+                    report.stopped = "Couldn't verify launch item \(item.label): its plist changed since confirmation. Nothing was deleted."
+                    return report
+                }
+                if let error = actions.bootout(item) {
+                    report.stopped = "Couldn't stop \(item.label): \(error). Nothing was deleted."
+                    return report
+                }
+            }
+        }
+        // A KeepAlive job can relaunch its own app while it is being stopped. Recheck just those
+        // members: asking an unrelated, newly started companion to quit here would be surprising.
+        for plan in plans where !plan.launchItems.isEmpty {
+            if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
+                report.stopped = "\(names.joined(separator: ", ")) started again and didn't quit; nothing was deleted."
+                return report
+            }
+        }
         for index in plans.indices.reversed() {
-            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], receiptTargets: receipts[index], isRoot: isRoot, casks: casks)
+            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], receiptTargets: receipts[index], isRoot: isRoot, casks: casks, launchItemsReady: true)
             report.deleted += part.deleted
             report.failed += part.failed
             report.actionFailures += part.actionFailures
@@ -67,12 +103,12 @@ public struct Executor {
     }
 
     /// `targets` are the confirmed findings with the identities they had when confirmed.
-    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], receiptTargets: [String: ReceiptTargets] = [:], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], receiptTargets: [String: ReceiptTargets] = [:], isRoot: Bool, casks: [InstalledCask], launchItemsReady: Bool = false) -> ExecutionReport {
         var report = ExecutionReport()
         let targetPaths = Set(targets.map { $0.finding.path.lowercased() })
 
         // 1. Stop the launch items being deleted.
-        for item in plan.launchItems where targetPaths.contains(item.plist.lowercased()) {
+        for item in plan.launchItems where !launchItemsReady && targetPaths.contains(item.plist.lowercased()) {
             if let error = actions.bootout(item) {
                 report.stopped = "Couldn't stop \(item.label): \(error). Nothing was deleted."
                 return report
@@ -81,7 +117,7 @@ public struct Executor {
 
         // Stopping a launch item can't bring the app back, but one with KeepAlive may have
         // relaunched it since it was quit. Deleting a running app lets it write its files again.
-        if !plan.launchItems.isEmpty, case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
+        if !launchItemsReady, !plan.launchItems.isEmpty, case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
             report.stopped = "\(names.joined(separator: ", ")) started again and didn't quit; nothing was deleted."
             return report
         }
@@ -182,6 +218,24 @@ public struct Executor {
         }
         return (targets, unavailable)
     }
+
+    /// Captures every concrete launch plist before confirmation. Keys include the domain because
+    /// the same label can legitimately exist in the user and system domains.
+    public static func launchTargets(for items: [LaunchItem], translate: (String) -> String = { $0 }) -> (targets: [String: LaunchTarget], unavailable: [LaunchItem]) {
+        var targets: [String: LaunchTarget] = [:]
+        var unavailable: [LaunchItem] = []
+        for item in items {
+            let path = translate(item.plist)
+            guard let identity = FileIdentity.of(path) else {
+                unavailable.append(item)
+                continue
+            }
+            targets[launchKey(item)] = LaunchTarget(item: item, target: RemovalTarget(path: path, identity: identity))
+        }
+        return (targets, unavailable)
+    }
+
+    static func launchKey(_ item: LaunchItem) -> String { "\(item.domain.rawValue):\(item.plist)" }
 }
 
 /// A sandbox run deletes a clone of the app's files instead of the real ones: the plan is made

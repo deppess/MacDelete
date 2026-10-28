@@ -6,12 +6,12 @@ import XCTest
 /// Hostile and broken input: every source of evidence is data from somewhere else (receipts,
 /// zap lists, plists, file names), so none of it may widen what's selected.
 final class RobustnessTests: XCTestCase {
-    func selectedPaths(_ plan: RemovalPlan) -> [String] { plan.selected(includeNameMatches: true).map(\.path) }
+    func selectedPaths(_ plan: RemovalPlan) -> [String] { plan.selected().map(\.path) }
 
     /// Nothing protected, nothing containing the user's home, nothing that is a standard folder.
     func assertSafe(_ plan: RemovalPlan, _ system: FakeSystem, file: StaticString = #filePath, line: UInt = #line) {
         let roots = system.roots
-        for finding in plan.selected(includeNameMatches: true) where !plan.isOwn(finding) {
+        for finding in plan.selected() where !plan.isOwn(finding) {
             XCTAssertFalse(Protection.isProtected(finding.path, roots: roots), "protected: \(finding.path)", file: file, line: line)
             XCTAssertFalse(system.home.path.hasPrefix(finding.path + "/") || finding.path == system.home.path, "contains home: \(finding.path)", file: file, line: line)
             XCTAssertFalse(Remover.isNeverDeletable(String(finding.path.dropFirst(system.root.path.count)), home: system.home, root: system.root.path), "never deletable: \(finding.path)", file: file, line: line)
@@ -96,7 +96,7 @@ final class RobustnessTests: XCTestCase {
         try system.makeApp("Free Raycast.app", in: system.home.appending(path: "Applications"), metadata: ["CFBundleIdentifier": "com.raycast.macos"])
         try system.touch("Users/tester/Library/Preferences/com.raycast.macos.plist")
         let plan = try system.plan("Free Raycast")
-        XCTAssertEqual(plan.selected(includeNameMatches: true).map(\.path), [system.home.appending(path: "Applications/Free Raycast.app").path])
+        XCTAssertEqual(plan.selected().map(\.path), [system.home.appending(path: "Applications/Free Raycast.app").path])
         XCTAssertTrue(plan.skipped.contains { $0.path.hasSuffix("com.raycast.macos.plist") })
     }
 
@@ -121,7 +121,7 @@ final class RobustnessTests: XCTestCase {
             try system.touch("Users/tester/Library/Caches/com.other/")
             let plan = try system.plan("Odd")
             assertSafe(plan, system)
-            let outside = plan.selected(includeNameMatches: true).filter { !plan.isOwn($0) && !$0.path.contains("/Library/") }
+            let outside = plan.selected().filter { !plan.isOwn($0) && !$0.path.contains("/Library/") }
             XCTAssertTrue(outside.isEmpty, "\(identifier.debugDescription): \(outside.map(\.path))")
             XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: "Documents/thesis.txt").path))
         }
@@ -158,7 +158,7 @@ final class RobustnessTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: system.home.appending(path: "Documents"))
         let plan = try system.plan("Example")
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertNil(FileIdentity.of(link.path), "the link is gone")
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: "Documents/thesis.txt").path), "what it pointed to is not")
@@ -171,7 +171,7 @@ final class RobustnessTests: XCTestCase {
         try system.touch("Users/tester/Library/Caches/com.example.app/cache")
         try system.touch("Users/tester/Documents/thesis.txt")
         let plan = try system.plan("Example")
-        let targets = Executor.targets(for: plan.selected(includeNameMatches: false))
+        let targets = Executor.targets(for: plan.selected())
         let caches = system.userLibrary.appending(path: "Caches/com.example.app")
         try FileManager.default.removeItem(at: caches)
         try FileManager.default.createSymbolicLink(at: caches, withDestinationURL: system.home.appending(path: "Documents"))
@@ -198,7 +198,7 @@ final class RobustnessTests: XCTestCase {
 
         let plan = try system.plan("Example")
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertFalse(FileManager.default.fileExists(atPath: base.path))

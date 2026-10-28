@@ -117,7 +117,7 @@ final class RuleTests: XCTestCase {
 
         let plan = try system.plan("Example")
         XCTAssertEqual(relative(plan.findings, system, tier: .name), ["\(lib)/Caches/SentryCrash/Example", "\(lib)/Application Support/CrashReporter/Example_00000000-1111-2222-3333-444444444444.plist"])
-        XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact })
+        XCTAssertTrue(plan.selected().contains { $0.tier == .name })
     }
 
     /// Without Full Disk Access, macOS refuses to list other apps' containers. That must read as
@@ -131,7 +131,7 @@ final class RuleTests: XCTestCase {
         defer { chmod(containers.path, 0o755) }
         let plan = try system.plan("Example")
         XCTAssertTrue(plan.unreadable.contains(containers.path), "\(plan.unreadable)")
-        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("Grant Full Disk Access to your terminal"))
+        XCTAssertTrue(PlanRenderer.text(plan, isRoot: false, home: system.home).contains("Grant Full Disk Access to your terminal"))
     }
 
     /// Unity's placeholder identifier is shared by unrelated games, so it finds nothing.
@@ -182,11 +182,11 @@ final class RuleTests: XCTestCase {
         XCTAssertEqual(Set(plan.findings.filter { $0.reason == "command-line link into the app" }.map { URL(filePath: $0.path).lastPathComponent }), ["example", "example2", "chain"])
         XCTAssertEqual(plan.findings.filter { $0.reason == "command-line executable named after the app" }.map(\.path), [bins[2].appending(path: "Example").path])
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertNotNil(FileIdentity.of(bins[0].appending(path: "other").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: bins[0].appending(path: "example-copy").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: bins[2].appending(path: "Example").path), "name evidence is never removed without --include-name-matches")
+        XCTAssertNil(FileIdentity.of(bins[2].appending(path: "Example").path), "the displayed name-derived command is removed too")
     }
 
     /// Plug-ins outside the bundle, by their own identifier.
@@ -243,7 +243,7 @@ final class RuleTests: XCTestCase {
         try system.touch("Users/tester/.local/share/other/")
         let plan = try system.plan("Example")
         XCTAssertEqual(relative(plan.findings, system, tier: .name), Set(paths.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }))
-        XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact }, "never selected by default")
+        XCTAssertEqual(Set(plan.selected().filter { $0.tier == .name }.map(\.path)), Set(plan.findings.filter { $0.tier == .name }.map(\.path)), "every displayed name finding is selected")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/Shared/Example") }?.reason, "named after the app, shared by all users")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/tester/Example") }?.reason, "named after the app; may hold your own files")
         for folder in [".local/share", ".local/state", ".local/bin", ".cache", "bin"] {
@@ -297,7 +297,7 @@ final class RuleTests: XCTestCase {
         XCTAssertTrue(kept["Example-Personal"]?.contains("your cloud files") ?? false)
         XCTAssertNil(kept["Dropbox"])
         XCTAssertTrue(kept["ExampleDriver.kext"]?.contains("kernel extension") ?? false)
-        XCTAssertFalse(plan.selected(includeNameMatches: true).contains { $0.path.contains("Mobile Documents") || $0.path.contains("CloudStorage") || $0.path.hasSuffix(".kext") })
+        XCTAssertFalse(plan.selected().contains { $0.path.contains("Mobile Documents") || $0.path.contains("CloudStorage") || $0.path.hasSuffix(".kext") })
         XCTAssertTrue(plan.notes.contains { $0.contains("in your Dock") })
         XCTAssertTrue(plan.notes.contains { $0.contains("coreaudiod") })
         try system.makeApp("Example.vst3", in: system.library.appending(path: "Audio/Plug-Ins/VST3"), metadata: ["CFBundleIdentifier": "com.example.app.vst3"])

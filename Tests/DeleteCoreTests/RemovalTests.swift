@@ -101,26 +101,79 @@ final class ExecutorTests: XCTestCase {
         try makeExample(system)
         let plan = try system.plan("Example")
         let report = Executor(actions: FailingActions(), allowedRoot: system.root.path, home: system.home)
-            .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+            .run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
 
         XCTAssertNotNil(report.stopped)
-        for finding in plan.selected(includeNameMatches: false) {
+        for finding in plan.selected() {
             XCTAssertTrue(FileManager.default.fileExists(atPath: finding.path), "launchctl failure must stop before \(finding.path)")
         }
+    }
+
+    func testGroupLaunchStopFailureLeavesMainAndCompanionUntouched() throws {
+        final class FailingSecondBootout: SystemActions, @unchecked Sendable {
+            var bootouts = 0
+            func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
+            func bootout(_ item: LaunchItem) -> String? {
+                bootouts += 1
+                return bootouts == 2 ? "permission denied" : nil
+            }
+            func forgetPackage(_ identifier: String) -> String? { nil }
+            func resetPrivacy(_ identifier: String) -> String? { nil }
+            func unregister(_ appPath: String) -> String? { nil }
+        }
+        let system = try FakeSystem()
+        try makeExample(system)
+        try system.makeApp("Helper.app", metadata: ["CFBundleIdentifier": "com.example.helper"])
+        let helperPlist = system.userLibrary.appending(path: "LaunchAgents/com.example.helper.agent.plist")
+        try system.writePlist(["Label": "com.example.helper.agent", "Program": "/usr/bin/true"], to: helperPlist)
+        let inventory = Inventory.load(roots: system.roots, sizes: false)
+        let main = try EvidenceFinder(roots: system.roots).plan(for: try XCTUnwrap(inventory.applications.first { $0.name == "Example" }), inventory: inventory)
+        let helper = try EvidenceFinder(roots: system.roots).plan(for: try XCTUnwrap(inventory.applications.first { $0.name == "Helper" }), inventory: inventory)
+        let plans = [main, helper]
+        let actions = FailingSecondBootout()
+        let executor = Executor(actions: actions, allowedRoot: system.root.path, home: system.home)
+        let report = executor.run(group: plans,
+                                  targets: plans.map { Executor.targets(for: $0.selected()) },
+                                  launchTargets: plans.map { Executor.launchTargets(for: $0.launchItems).targets },
+                                  isRoot: false, casks: [])
+
+        XCTAssertEqual(actions.bootouts, 2)
+        XCTAssertEqual(report.stopped, "Couldn't stop com.example.helper.agent: permission denied. Nothing was deleted.")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.applications.appending(path: "Example.app").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.applications.appending(path: "Helper.app").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
+    }
+
+    func testGroupRefusesLaunchPlistReplacedAfterConfirmation() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+        let launches = Executor.launchTargets(for: plan.launchItems)
+        let plist = try XCTUnwrap(plan.launchItems.first?.plist)
+        try FileManager.default.removeItem(atPath: plist)
+        try system.writePlist(["Label": "com.example.app.agent", "Program": "/usr/bin/false"], to: URL(filePath: plist))
+        let actions = RecordingSystemActions()
+        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(
+            group: [plan], targets: [Executor.targets(for: plan.selected())], launchTargets: [launches.targets], isRoot: false, casks: [])
+
+        XCTAssertEqual(report.stopped, "Couldn't verify launch item com.example.app.agent: its plist changed since confirmation. Nothing was deleted.")
+        XCTAssertFalse(actions.recorded.contains { $0.hasPrefix("launchctl bootout") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plan.application.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
     }
 
     func testApprovalFingerprintChangesWhenIdentityOrPermissionsChange() throws {
         let system = try FakeSystem()
         let path = try system.touch("Users/tester/Library/Preferences/com.example.app.plist")
         let first = try XCTUnwrap(FileIdentity.of(path.path))
-        let base = RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": first])
+        let base = RemovalPlan.fingerprint([], identities: ["delete:\(path.path)": first])
         XCTAssertEqual(chmod(path.path, 0o600), 0)
         let changedPermissions = try XCTUnwrap(FileIdentity.of(path.path))
-        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": changedPermissions]))
+        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], identities: ["delete:\(path.path)": changedPermissions]))
         try FileManager.default.removeItem(at: path)
         try system.write("replacement", to: path)
         let replacement = try XCTUnwrap(FileIdentity.of(path.path))
-        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], includeNameMatches: false, identities: ["delete:\(path.path)": replacement]))
+        XCTAssertNotEqual(base, RemovalPlan.fingerprint([], identities: ["delete:\(path.path)": replacement]))
     }
     func testUnavailableTargetsAreReportedInsteadOfSilentlyDropped() throws {
         let system = try FakeSystem()
@@ -173,7 +226,7 @@ final class ExecutorTests: XCTestCase {
         try makeExample(system)
         let plan = try system.plan("Example")
         let actions = RecordingSystemActions()
-        let targets = Executor.targets(for: plan.selected(includeNameMatches: true))
+        let targets = Executor.targets(for: plan.selected())
         let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: targets, isRoot: false, casks: [])
 
         XCTAssertNil(report.stopped)
@@ -194,7 +247,7 @@ final class ExecutorTests: XCTestCase {
         let system = try FakeSystem()
         try makeExample(system)
         let plan = try system.plan("Example")
-        let targets = Executor.targets(for: plan.selected(includeNameMatches: true))
+        let targets = Executor.targets(for: plan.selected())
         _ = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: targets, isRoot: false, casks: [])
         XCTAssertFalse(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Application Support/Example").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: "Documents/Example/project").path))
@@ -204,7 +257,7 @@ final class ExecutorTests: XCTestCase {
         let system = try FakeSystem()
         try makeExample(system)
         let plan = try system.plan("Example")
-        let targets = Executor.targets(for: plan.selected(includeNameMatches: false))
+        let targets = Executor.targets(for: plan.selected())
         // The app's folder is read-only, so the app can't be removed.
         XCTAssertEqual(chmod(system.applications.appending(path: "Example.app/Contents").path, 0o555), 0)
         defer { chmod(system.applications.appending(path: "Example.app/Contents").path, 0o755) }
@@ -230,7 +283,7 @@ final class ExecutorTests: XCTestCase {
         let plan = try system.plan("Example")
         XCTAssertEqual(plan.homebrewCask, "example")
         let casks = Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home)
-        let report = Executor(actions: RecordingActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: casks)
+        let report = Executor(actions: RecordingActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: casks)
         XCTAssertNil(report.stopped)
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertFalse(FileManager.default.fileExists(atPath: system.applications.appending(path: "Example.app").path))
@@ -254,19 +307,19 @@ final class ExecutorTests: XCTestCase {
         let plan = try original.plan("Example")
         let sandboxFolder = try FakeSystem()
         let sandbox = try XCTUnwrap(Sandbox(path: sandboxFolder.root.path))
-        for finding in plan.selected(includeNameMatches: false) {
+        for finding in plan.selected() {
             let clone = sandbox.translate(finding.path)
             try FileManager.default.createDirectory(atPath: (clone as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try FileManager.default.copyItem(atPath: finding.path, toPath: clone)
         }
         let actions = RecordingSystemActions()
         let report = Executor(actions: actions, allowedRoot: sandbox.root, home: original.home)
-            .run(sandbox.translate(plan), targets: Executor.targets(for: plan.selected(includeNameMatches: false), translate: sandbox.translate), isRoot: false, casks: [])
+            .run(sandbox.translate(plan), targets: Executor.targets(for: plan.selected(), translate: sandbox.translate), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertEqual(report.failed.count, 0, "\(report.failed)")
-        XCTAssertEqual(report.deleted.count, 4)
+        XCTAssertEqual(report.deleted.count, 5)
         XCTAssertTrue(report.deleted.allSatisfy { !$0.path.hasPrefix(sandbox.root) }, "reported by their real paths")
-        for finding in plan.selected(includeNameMatches: false) {
+        for finding in plan.selected() {
             XCTAssertTrue(FileManager.default.fileExists(atPath: finding.path), "original kept: \(finding.path)")
             XCTAssertFalse(FileManager.default.fileExists(atPath: sandbox.translate(finding.path)), "clone deleted: \(finding.path)")
         }
@@ -279,19 +332,19 @@ final class ExecutorTests: XCTestCase {
         var plan = try system.plan("Example")
         let preferences = try XCTUnwrap(plan.findings.firstIndex { $0.path.hasSuffix("com.example.app.plist") })
         plan.findings[preferences].needsRoot = true
-        var split = plan.split(includeNameMatches: false, isRoot: false)
+        var split = plan.split(isRoot: false)
         XCTAssertEqual(split.needingRoot.map(\.path), [plan.findings[preferences].path], "a leftover needing root is only set aside")
         XCTAssertTrue(split.deleting.contains { plan.isOwn($0) })
 
         let own = try XCTUnwrap(plan.findings.firstIndex { plan.isOwn($0) })
         plan.findings[own].needsRoot = true
-        split = plan.split(includeNameMatches: false, isRoot: false)
+        split = plan.split(isRoot: false)
         XCTAssertTrue(split.deleting.isEmpty)
-        XCTAssertEqual(split.needingRoot.count, plan.selected(includeNameMatches: false).count)
-        XCTAssertNil(PlanRenderer.question([plan], includeNameMatches: false, isRoot: false), "nothing to ask: the run stops")
-        XCTAssertTrue(PlanRenderer.text(plan, includeNameMatches: false, isRoot: false, home: system.home).contains("Example itself needs administrator rights"))
-        XCTAssertEqual(plan.split(includeNameMatches: false, isRoot: true).deleting.count, plan.selected(includeNameMatches: false).count)
-        XCTAssertNotNil(PlanRenderer.question([plan], includeNameMatches: false, isRoot: true))
+        XCTAssertEqual(split.needingRoot.count, plan.selected().count)
+        XCTAssertNil(PlanRenderer.question([plan], isRoot: false), "nothing to ask: the run stops")
+        XCTAssertTrue(PlanRenderer.text(plan, isRoot: false, home: system.home).contains("Example itself needs administrator rights"))
+        XCTAssertEqual(plan.split(isRoot: true).deleting.count, plan.selected().count)
+        XCTAssertNotNil(PlanRenderer.question([plan], isRoot: true))
     }
 
     /// tccutil looks the identifier up through Launch Services, so it runs while the app is there.
@@ -314,7 +367,7 @@ final class ExecutorTests: XCTestCase {
         try makeExample(system)
         let plan = try system.plan("Example")
         let actions = Watching(bundle: plan.application.bundlePath)
-        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertFalse(actions.appExistedAtReset.isEmpty)
         XCTAssertTrue(actions.appExistedAtReset.allSatisfy { $0 })
         XCTAssertFalse(FileManager.default.fileExists(atPath: plan.application.bundlePath))
@@ -330,7 +383,7 @@ final class ExecutorTests: XCTestCase {
         XCTAssertEqual(chmod(resources.path, 0o555), 0)
         defer { chmod(resources.path, 0o755) }
         let plan = try system.plan("Example")
-        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertEqual(report.stopped, "Example was only partly deleted, so its other files were left alone. Rerun with sudo to finish.")
         XCTAssertTrue(report.failed.first?.reason.contains("couldn't be removed") ?? false, "\(report.failed)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
@@ -345,13 +398,13 @@ final class ExecutorTests: XCTestCase {
         XCTAssertEqual(chmod(support.appending(path: "locked").path, 0o555), 0)
         defer { chmod(support.appending(path: "locked").path, 0o755) }
         let plan = try system.plan("Example")
-        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertNil(report.stopped)
         XCTAssertEqual(report.failed.map(\.finding.path), [support.path])
-        XCTAssertEqual(report.deleted.count, 3)
+        XCTAssertEqual(report.deleted.count, 4)
         XCTAssertFalse(FileManager.default.fileExists(atPath: system.userLibrary.appending(path: "Preferences/com.example.app.plist").path))
         let text = PlanRenderer.report(report, home: system.home)
-        XCTAssertTrue(text.hasPrefix("Deleted 3 items"), text)
+        XCTAssertTrue(text.hasPrefix("Deleted 4 items"), text)
         XCTAssertTrue(text.contains("Couldn't delete:\n  ~/Library/Application Support/com.example.app   1 item inside couldn't be removed (locked/file: Permission denied)"), text)
     }
 
@@ -372,7 +425,7 @@ final class ExecutorTests: XCTestCase {
         let plan = try system.plan("Example")
         XCTAssertFalse(plan.launchItems.isEmpty)
         let actions = Relaunching()
-        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
+        let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertEqual(actions.calls, ["bootout", "quit"])
         XCTAssertEqual(report.stopped, "Example started again and didn't quit; nothing was deleted.")
         XCTAssertTrue(report.deleted.isEmpty)

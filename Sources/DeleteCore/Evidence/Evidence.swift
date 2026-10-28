@@ -2,8 +2,7 @@ import CryptoKit
 import Foundation
 
 public enum EvidenceTier: String, Sendable, Codable {
-    /// Named by the app's identifier, its entitlements, its receipt, or its own launch item:
-    /// selected by default.
+    /// Named by the app's identifier, its entitlements, its receipt, or its own launch item.
     case exact
     /// Matched only by the app's name: lower-confidence evidence, but included in the displayed
     /// and confirmed deletion plan.
@@ -66,9 +65,9 @@ public struct RemovalPlan: Sendable {
     /// in them (a `.DS_Store` aside), never with their contents.
     public var emptyFolders: [String] = []
 
-    public func selected(includeNameMatches: Bool) -> [Finding] {
-        findings.filter { $0.tier == .exact || includeNameMatches }
-    }
+    /// Every displayed finding is part of the one confirmed deletion plan. `tier` still records
+    /// whether the evidence is exact or name-derived, so callers can render the distinction.
+    public func selected() -> [Finding] { findings }
 
     /// The app's own bundle (or a Steam game's folder): deleted first, and the run stops if it can't be.
     public func isOwn(_ finding: Finding) -> Bool {
@@ -83,16 +82,16 @@ public struct RemovalPlan: Sendable {
     }
 
     /// What this run deletes, and what it leaves for `sudo`.
-    public func split(includeNameMatches: Bool, isRoot: Bool) -> (deleting: [Finding], needingRoot: [Finding]) {
-        let selected = selected(includeNameMatches: includeNameMatches)
+    public func split(isRoot: Bool) -> (deleting: [Finding], needingRoot: [Finding]) {
+        let selected = selected()
         if isRoot { return (selected, []) }
         if appNeedsRoot(isRoot: isRoot) { return ([], selected) }
         return (selected.filter { !$0.needsRoot }, selected.filter(\.needsRoot))
     }
 
     /// Whether deleting it needs administrator rights: an item, a receipt, or a system launch item.
-    public func needsRoot(includeNameMatches: Bool) -> Bool {
-        !split(includeNameMatches: includeNameMatches, isRoot: false).needingRoot.isEmpty || !packages.isEmpty || launchItems.contains { $0.domain == .system }
+    public func needsRoot() -> Bool {
+        !split(isRoot: false).needingRoot.isEmpty || !packages.isEmpty || launchItems.contains { $0.domain == .system }
     }
 
     /// An app's plan and its companions' with every item, receipt and launch item in only one of
@@ -122,11 +121,11 @@ public struct RemovalPlan: Sendable {
     /// without asking again only when its plans have the one that was confirmed.
     /// `identities` is captured after the final plan and before confirmation. It binds a sudo
     /// rerun to the exact filesystem objects, ownership and modes the user reviewed.
-    public static func fingerprint(_ plans: [RemovalPlan], includeNameMatches: Bool, identities: [String: FileIdentity] = [:]) -> String {
+    public static func fingerprint(_ plans: [RemovalPlan], identities: [String: FileIdentity] = [:]) -> String {
         var text = ""
         for plan in plans {
             text += plan.application.path + "\u{0}"
-            text += plan.selected(includeNameMatches: includeNameMatches).map(\.path).sorted().joined(separator: "\u{0}") + "\u{1}"
+            text += plan.selected().map(\.path).sorted().joined(separator: "\u{0}") + "\u{1}"
             text += plan.packages.sorted().joined(separator: "\u{0}") + "\u{1}"
             text += plan.launchItems.map(\.plist).sorted().joined(separator: "\u{0}") + "\u{1}"
             text += plan.emptyFolders.sorted().joined(separator: "\u{0}") + "\u{1}" + (plan.homebrewCask ?? "") + "\u{2}"

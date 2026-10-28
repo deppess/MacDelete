@@ -53,7 +53,7 @@ extension EvidenceFinder {
         }
         // Cross-platform apps sometimes keep a workspace beside the hidden configuration folder
         // (for example ~/logseq next to ~/.logseq). It can be the user's actual documents, so
-        // show an unambiguous same-named home-folder but never select it by default.
+        // show an unambiguous same-named home-folder with an explicit user-data warning.
         for name in collector.list(roots.home) where !name.hasPrefix(".") && isNamed(name) {
             let item = roots.home.appending(path: name)
             guard (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
