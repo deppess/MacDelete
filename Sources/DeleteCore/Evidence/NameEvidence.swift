@@ -1,7 +1,7 @@
 import Foundation
 
-/// Name evidence: items named only after the app, shown but never selected without
-/// `--include-name-matches`.
+/// Name evidence: lower-confidence items named only after the app. They remain visibly
+/// distinguished in the plan, but are included in its single confirmed deletion set.
 extension EvidenceFinder {
     func nameFindings(_ application: InstalledApp, others: [InstalledApp], collector: inout Collector) -> [Finding] {
         let otherNames = Set(others.flatMap { [$0.name] + $0.alternateNames + [$0.executableName].compactMap { $0 } }.map { $0.lowercased() })
@@ -51,10 +51,30 @@ extension EvidenceFinder {
         for name in collector.list(roots.home) where name.hasPrefix(".") && dotNames.contains(String(name.dropFirst()).lowercased()) {
             findings.append(Finding(path: roots.home.appending(path: name).path, tier: .name, reason: "named after the app"))
         }
+        // Cross-platform apps sometimes keep a workspace beside the hidden configuration folder
+        // (for example ~/logseq next to ~/.logseq). It can be the user's actual documents, so
+        // show an unambiguous same-named home-folder but never select it by default.
+        for name in collector.list(roots.home) where !name.hasPrefix(".") && isNamed(name) {
+            let item = roots.home.appending(path: name)
+            guard (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            findings.append(Finding(path: item.path, tier: .name, reason: "named after the app; may hold your own files"))
+        }
         // XDG folders that command-line and cross-platform apps use (~/.local/share/mimi).
         for folder in [".local/share", ".local/state", ".cache"].map({ roots.home.appending(path: $0, directoryHint: .isDirectory) }) {
             for name in collector.list(folder) where dotNames.contains(name.lowercased()) {
                 findings.append(Finding(path: folder.appending(path: name).path, tier: .name, reason: "named after the app"))
+            }
+        }
+        // Some desktop apps install a separate user command in ~/.local/bin or ~/bin. A regular
+        // executable with the app's unambiguous name is useful evidence, but not proof that it
+        // came from the bundle (unlike CommandLinks above), so the plan labels it as name-derived.
+        // Do not include arbitrary files or a same-named symlink: the former is not a command and
+        // the latter is handled as exact evidence only when it resolves into this app.
+        for folder in [".local/bin", "bin"].map({ roots.home.appending(path: $0, directoryHint: .isDirectory) }) {
+            for name in collector.list(folder) where isNamed(name) {
+                let executable = folder.appending(path: name)
+                guard isRegularExecutable(executable) else { continue }
+                findings.append(Finding(path: executable.path, tier: .name, reason: "command-line executable named after the app"))
             }
         }
         // The system-wide counterparts, and the folder every user of the Mac shares.

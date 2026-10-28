@@ -131,6 +131,32 @@ final class ExecutorTests: XCTestCase {
         XCTAssertEqual(Executor.targets(for: [available, missing]).map { $0.finding.path }, [present.path])
         XCTAssertEqual(Executor.unavailableTargets(for: [available, missing]), [missing])
     }
+
+    func testReceiptRecordsAreBoundBeforeForgetting() throws {
+        let system = try FakeSystem()
+        let package = "com.example.installer"
+        let plist = try system.touch("var/db/receipts/installer-record.plist")
+        let bom = try system.touch("var/db/receipts/installer-record.bom")
+        let receipts = PackageReceipts(filesByIdentifier: [package: .init(plist: plist.path, bom: bom.path)])
+        let capture = Executor.receiptTargets(for: [package], receipts: receipts)
+        XCTAssertTrue(capture.unavailable.isEmpty)
+        let plan = RemovalPlan(application: app("Example"), identifiers: [], findings: [], skipped: [], launchItems: [], packages: [package], unreadable: [], notes: [], running: false, homebrewCask: nil)
+
+        // An unrelated receipt changing cannot invalidate this package's confirmation.
+        _ = try system.touch("var/db/receipts/unrelated.plist")
+        let actions = RecordingSystemActions()
+        let first = Executor(actions: actions, allowedRoot: system.root.path, home: system.home)
+            .run(plan, targets: [], receiptTargets: capture.targets, isRoot: true, casks: [])
+        XCTAssertTrue(first.actionFailures.isEmpty, "\(first.actionFailures)")
+        XCTAssertTrue(actions.recorded.contains("pkgutil --forget \(package)"))
+
+        // Replacing the real BOM after confirmation prevents the destructive system action.
+        try FileManager.default.removeItem(at: bom)
+        try system.write("replacement", to: bom)
+        let changed = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
+            .run(plan, targets: [], receiptTargets: capture.targets, isRoot: true, casks: [])
+        XCTAssertTrue(changed.actionFailures.contains { $0.contains(package) && $0.contains("changed since confirmation") }, "\(changed.actionFailures)")
+    }
     func makeExample(_ system: FakeSystem) throws {
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
         try system.makeApp("Example Pro.app", metadata: ["CFBundleIdentifier": "com.example.app.pro"])
@@ -142,21 +168,21 @@ final class ExecutorTests: XCTestCase {
         try system.writePlist(["Label": "com.example.app.agent", "Program": "/usr/bin/true"], to: system.userLibrary.appending(path: "LaunchAgents/com.example.app.agent.plist"))
     }
 
-    func testDeletesExactlyTheConfirmedItems() throws {
+    func testDeletesEveryFindingInTheConfirmedPlan() throws {
         let system = try FakeSystem()
         try makeExample(system)
         let plan = try system.plan("Example")
         let actions = RecordingSystemActions()
-        let targets = Executor.targets(for: plan.selected(includeNameMatches: false))
+        let targets = Executor.targets(for: plan.selected(includeNameMatches: true))
         let report = Executor(actions: actions, allowedRoot: system.root.path, home: system.home).run(plan, targets: targets, isRoot: false, casks: [])
 
         XCTAssertNil(report.stopped)
         XCTAssertEqual(report.failed.count, 0, "\(report.failed)")
-        XCTAssertEqual(Set(report.deleted.map { URL(filePath: $0.path).lastPathComponent }), ["Example.app", "com.example.app", "com.example.app.plist", "com.example.app.agent.plist"])
-        for gone in ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app", "Users/tester/Library/Preferences/com.example.app.plist", "Users/tester/Library/LaunchAgents/com.example.app.agent.plist"] {
+        XCTAssertEqual(Set(report.deleted.map { URL(filePath: $0.path).lastPathComponent }), ["Example.app", "Example", "com.example.app", "com.example.app.plist", "com.example.app.agent.plist"])
+        for gone in ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app", "Users/tester/Library/Application Support/Example", "Users/tester/Library/Preferences/com.example.app.plist", "Users/tester/Library/LaunchAgents/com.example.app.agent.plist"] {
             XCTAssertFalse(FileManager.default.fileExists(atPath: system.root.appending(path: gone).path), gone)
         }
-        for kept in ["Applications/Example Pro.app", "Users/tester/Library/Preferences/com.example.app.pro.plist", "Users/tester/Library/Application Support/Example/settings", "Users/tester/Documents/Example/project"] {
+        for kept in ["Applications/Example Pro.app", "Users/tester/Library/Preferences/com.example.app.pro.plist", "Users/tester/Documents/Example/project"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: system.root.appending(path: kept).path), kept)
         }
         XCTAssertEqual(actions.recorded.first, "launchctl bootout gui/<uid> \(system.userLibrary.appending(path: "LaunchAgents/com.example.app.agent.plist").path)", "launch items stop before anything is deleted")
@@ -164,7 +190,7 @@ final class ExecutorTests: XCTestCase {
         XCTAssertTrue(actions.recorded.contains { $0.hasPrefix("lsregister -u ") })
     }
 
-    func testNameMatchesOnlyWhenAsked() throws {
+    func testNameMatchesDeleteWhenIncludedInTheConfirmedPlan() throws {
         let system = try FakeSystem()
         try makeExample(system)
         let plan = try system.plan("Example")

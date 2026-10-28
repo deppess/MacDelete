@@ -17,7 +17,6 @@ public enum DeleteCLI {
       --json                    Machine-readable output (list, and the plan with --dry-run)
       --dry-run                 Show what would be deleted, delete nothing
       -y, --yes                 Don't ask before deleting
-      --include-name-matches    Also delete items matched only by the app's name
       --no-companions           Leave the apps installed with it (FL Studio's FL Cloud Plugins)
       -h, --help                Show this help
       --version                 Show the version
@@ -222,6 +221,13 @@ public enum DeleteCLI {
             return EXIT_FAILURE
         }
         let targets = selected.map { Executor.targets(for: $0, translate: translator) }
+        let receiptCaptures = plans.map { Executor.receiptTargets(for: $0.packages, receipts: inventory.receipts) }
+        let receiptTargets = receiptCaptures.map(\.targets)
+        let missingReceipts = receiptCaptures.flatMap(\.unavailable)
+        guard missingReceipts.isEmpty || sandbox != nil else {
+            printError("The installer receipt records changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingReceipts.sorted().map { "  \($0)" }.joined(separator: "\n"))
+            return EXIT_FAILURE
+        }
         let emptyTargets: [[String: RemovalTarget]] = plans.map { plan in
             Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { folder in
                 let path = translator(folder)
@@ -235,6 +241,12 @@ public enum DeleteCLI {
         }
         var approvalIdentities: [String: FileIdentity] = [:]
         for items in targets { for item in items { approvalIdentities["delete:\(item.finding.path)"] = item.target.identity } }
+        for records in receiptTargets {
+            for (package, targets) in records {
+                approvalIdentities["receipt:\(package):plist"] = targets.plist.identity
+                approvalIdentities["receipt:\(package):bom"] = targets.bom.identity
+            }
+        }
         for items in emptyTargets { for (path, target) in items { approvalIdentities["rmdir:\(path)"] = target.identity } }
         for plan in plans {
             for item in plan.launchItems {
@@ -271,7 +283,7 @@ public enum DeleteCLI {
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, isRoot: isRoot, casks: inventory.casks)
+        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, receiptTargets: receiptTargets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         let needingRoot = plans.flatMap { $0.split(includeNameMatches: invocation.includeNameMatches, isRoot: isRoot).needingRoot }
@@ -294,7 +306,6 @@ public enum DeleteCLI {
             return EXIT_FAILURE
         }
         var arguments = ["/usr/bin/sudo", "--", executable, "--approved", fingerprint]
-        if invocation.includeNameMatches { arguments.append("--include-name-matches") }
         if !invocation.withCompanions { arguments.append("--no-companions") }
         arguments += ["--", application.path]
         fflush(stdout)
@@ -352,7 +363,10 @@ struct Invocation {
     var json = false
     var dryRun = false
     var assumeYes = false
-    var includeNameMatches = false
+    /// Name-derived findings are part of every normal deletion plan. The field remains so the
+    /// plan model can distinguish their lower-confidence origin and old approved reruns remain
+    /// parseable; `--include-name-matches` is accepted as a compatibility no-op.
+    var includeNameMatches = true
     var withCompanions = true
     /// Set by delete's own rerun under sudo: the fingerprint of the plan that was confirmed.
     var approved: String?
@@ -391,7 +405,7 @@ struct Invocation {
         guard let first = positional.first else { command = .help; return }
         if first == "list" && !optionsEnded {
             guard positional.count == 1 else { throw UsageError("\"delete list\" takes no app name.") }
-            guard !dryRun, !assumeYes, !includeNameMatches, withCompanions, approved == nil else { throw UsageError("--dry-run, -y, --include-name-matches and --no-companions apply to deleting an app.") }
+            guard !dryRun, !assumeYes, withCompanions, approved == nil else { throw UsageError("--dry-run, -y and --no-companions apply to deleting an app.") }
             command = .list
             return
         }

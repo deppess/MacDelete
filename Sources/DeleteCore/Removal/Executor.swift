@@ -19,6 +19,12 @@ public struct ExecutionReport: Sendable {
 /// goes next, and if it can't be deleted the run stops with the app's data intact; then the
 /// leftovers; then the records (receipts, Launch Services).
 public struct Executor {
+    /// The receipt plist and BOM identities confirmed before `pkgutil --forget`. A receipt
+    /// identifier is not reliably its file stem, so both concrete paths come from the local index.
+    public struct ReceiptTargets: Sendable, Equatable {
+        public var plist: RemovalTarget
+        public var bom: RemovalTarget
+    }
     public let actions: SystemActions
     /// Every target must lie inside this folder ("/" for a real run, the sandbox otherwise).
     public let allowedRoot: String
@@ -35,11 +41,12 @@ public struct Executor {
     }
 
     /// An app and its companions (`plans[0]` is the app). Companions go first, then the app.
-    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
         let conditional = emptyTargets.count == plans.count ? emptyTargets : Array(repeating: [:], count: plans.count)
+        let receipts = receiptTargets.count == plans.count ? receiptTargets : Array(repeating: [:], count: plans.count)
         for index in plans.indices.reversed() {
-            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], isRoot: isRoot, casks: casks)
+            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], receiptTargets: receipts[index], isRoot: isRoot, casks: casks)
             report.deleted += part.deleted
             report.failed += part.failed
             report.actionFailures += part.actionFailures
@@ -60,7 +67,7 @@ public struct Executor {
     }
 
     /// `targets` are the confirmed findings with the identities they had when confirmed.
-    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], receiptTargets: [String: ReceiptTargets] = [:], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
         let targetPaths = Set(targets.map { $0.finding.path.lowercased() })
 
@@ -121,7 +128,17 @@ public struct Executor {
         // 3. Records: installer receipts (root only), Launch Services.
         if !plan.packages.isEmpty {
             if isRoot {
-                for package in plan.packages { if let error = actions.forgetPackage(package) { report.actionFailures.append("Couldn't forget receipt \(package): \(error)") } }
+                for package in plan.packages {
+                    guard let targets = receiptTargets[package] else {
+                        report.actionFailures.append("Couldn't forget receipt \(package): its plist or BOM was unavailable when the plan was confirmed")
+                        continue
+                    }
+                    guard FileIdentity.of(targets.plist.path) == targets.plist.identity, FileIdentity.of(targets.bom.path) == targets.bom.identity else {
+                        report.actionFailures.append("Couldn't forget receipt \(package): its plist or BOM changed since confirmation")
+                        continue
+                    }
+                    if let error = actions.forgetPackage(package) { report.actionFailures.append("Couldn't forget receipt \(package): \(error)") }
+                }
             } else {
                 report.warnings.append("The installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", ")) need\(plan.packages.count == 1 ? "s" : "") sudo to forget.")
             }
@@ -149,6 +166,21 @@ public struct Executor {
     /// the user is being asked to approve.
     public static func unavailableTargets(for findings: [Finding], translate: (String) -> String = { $0 }) -> [Finding] {
         findings.filter { FileIdentity.of(translate($0.path)) == nil }
+    }
+
+    /// Captures the actual receipt records, rather than guessing a `PackageIdentifier.plist`
+    /// name. Missing records block a real run before the user confirms it.
+    public static func receiptTargets(for packages: [String], receipts: PackageReceipts) -> (targets: [String: ReceiptTargets], unavailable: [String]) {
+        var targets: [String: ReceiptTargets] = [:]
+        var unavailable: [String] = []
+        for package in packages {
+            guard let files = receipts.files(for: package), let plist = FileIdentity.of(files.plist), let bom = FileIdentity.of(files.bom) else {
+                unavailable.append(package)
+                continue
+            }
+            targets[package] = ReceiptTargets(plist: RemovalTarget(path: files.plist, identity: plist), bom: RemovalTarget(path: files.bom, identity: bom))
+        }
+        return (targets, unavailable)
     }
 }
 

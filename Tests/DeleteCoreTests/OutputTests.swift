@@ -49,7 +49,7 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(listing.json && listing.all)
         let removal = try Invocation(arguments: ["Raycast", "--dry-run", "-y"])
         XCTAssertEqual(removal.command, .remove("Raycast"))
-        XCTAssertTrue(removal.dryRun && removal.assumeYes)
+        XCTAssertTrue(removal.dryRun && removal.assumeYes && removal.includeNameMatches)
         XCTAssertEqual(try Invocation(arguments: ["--", "list"]).command, .remove("list"), "an app named list")
         XCTAssertEqual(try Invocation(arguments: ["list", "--help"]).command, .help)
         XCTAssertThrowsError(try Invocation(arguments: ["list", "Raycast"]))

@@ -75,7 +75,6 @@ public enum Completion {
             complete -c delete -n '__fish_seen_subcommand_from completions' -a 'fish zsh bash'
             complete -c delete -n 'not __fish_seen_subcommand_from list completions' -s n -l dry-run -d 'Show what would be deleted, delete nothing'
             complete -c delete -n 'not __fish_seen_subcommand_from list completions' -s y -l yes -d "Don't ask before deleting"
-            complete -c delete -n 'not __fish_seen_subcommand_from list completions' -l include-name-matches -d 'Also delete items matched only by name'
             complete -c delete -n 'not __fish_seen_subcommand_from list completions' -l no-companions -d 'Leave the apps installed with it'
             complete -c delete -n 'not __fish_seen_subcommand_from completions' -l json -d 'Machine-readable output'
             complete -c delete -n '__fish_seen_subcommand_from list' -l all -d 'Also list macOS components and helpers'
@@ -93,7 +92,6 @@ public enum Completion {
                 options=(
                     '(-n --dry-run)'{-n,--dry-run}'[Show what would be deleted, delete nothing]'
                     '(-y --yes)'{-y,--yes}"[Don't ask before deleting]"
-                    '--include-name-matches[Also delete items matched only by name]' \\
                     '--no-companions[Leave the apps installed with it]'
                     '--json[Machine-readable output]'
                     '--all[Also list macOS components and helpers]'
@@ -137,7 +135,7 @@ public enum Completion {
                     [[ $word != -* ]] && return
                 done
                 if [[ $current == -* ]]; then
-                    COMPREPLY=($(compgen -W '--dry-run -n --yes -y --include-name-matches --no-companions --json --all --help --version' -- "$current"))
+                    COMPREPLY=($(compgen -W '--dry-run -n --yes -y --no-companions --json --all --help --version' -- "$current"))
                 elif [[ $current == [~/.]* ]]; then
                     local IFS=$'\n'
                     COMPREPLY=($(compgen -f -- "$current"))

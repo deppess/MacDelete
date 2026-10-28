@@ -31,8 +31,8 @@ clone)
     app=${2:?usage: Scripts/sandbox clone <app>}
     plan=$(mktemp -t delete-plan)
     trap 'rm -f "$plan"' EXIT
-    # Everything delete could remove, name matches included, so --include-name-matches can be tried too.
-    "$bin" --dry-run --json --include-name-matches -- "$app" > "$plan"
+    # The complete default plan, including visibly labeled name-derived findings.
+    "$bin" --dry-run --json -- "$app" > "$plan"
     rm -rf -- "$sandbox"
     mkdir -p -- "$sandbox"
     # The app's items and its companions' (apps installed with it, deleted with it).
@@ -75,7 +75,7 @@ show)
     find "$sandbox" -mindepth 1 -maxdepth 6 \( -name '*.app' -prune -print \) -o \( -type f -print \) -o \( -type l -print \) | sed "s|^$sandbox||" | sort | head -100
     ;;
 *)
-    print -u2 "usage: Scripts/sandbox clone <app> | run <app> [-y] [--include-name-matches] | show"
+    print -u2 "usage: Scripts/sandbox clone <app> | run <app> [-y] | show"
     exit 2
     ;;
 esac

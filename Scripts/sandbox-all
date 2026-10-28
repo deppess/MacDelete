@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -I
-"""Sandbox-deletes every installed app in turn and checks the result: each selected item's clone
-is gone, each name-match clone is still there, and every original is untouched. Only APFS clones
+"""Sandbox-deletes every installed app in turn and checks the result: every planned item's clone
+is gone and every original is untouched. Only APFS clones
 under $TMPDIR/delete-sandbox are deleted (see Scripts/sandbox); system actions are only recorded.
 Apps delete refuses (MacPorts, macOS) count as passes. Leaves the sandbox holding the last app.
 
@@ -29,8 +29,7 @@ for app in apps:
     for f in plan["findings"]:
         if f["path"] not in cloned: continue
         exists = os.path.lexists(sandbox + f["path"])
-        if f["tier"] == "exact" and exists: problems.append("exact clone left: " + f["path"])
-        if f["tier"] == "name" and not exists: problems.append("name-match clone deleted: " + f["path"])
+        if exists: problems.append("planned clone left: " + f["path"])
         if not os.path.lexists(f["path"]): problems.append("ORIGINAL GONE: " + f["path"])
     if run.returncode != 0: problems.append("exit %d: %s" % (run.returncode, (run.stderr or run.stdout).strip().splitlines()[-1:] ))
     uncloned = len(plan["findings"]) - len(cloned)

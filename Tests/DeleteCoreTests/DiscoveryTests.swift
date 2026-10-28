@@ -194,9 +194,9 @@ final class SourceTests: XCTestCase {
 
     func testReceiptsSkipApplePackagesAndMapAppsToPackages() throws {
         let system = try FakeSystem()
-        for identifier in ["audio.vital.synth", "com.apple.pkg.Xcode"] {
-            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": identifier, "InstallPrefixPath": "/"], format: .xml, options: 0).write(to: system.receipts.appending(path: "\(identifier).plist"))
-            try system.write("", to: system.receipts.appending(path: "\(identifier).bom"))
+        for (identifier, stem) in [("audio.vital.synth", "vital-installer-record"), ("com.apple.pkg.Xcode", "com.apple.pkg.Xcode")] {
+            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": identifier, "InstallPrefixPath": "/"], format: .xml, options: 0).write(to: system.receipts.appending(path: "\(stem).plist"))
+            try system.write("", to: system.receipts.appending(path: "\(stem).bom"))
         }
         let lsbom = system.root.appending(path: "bin/lsbom")
         try system.write("#!/bin/sh\ncase \"$3\" in *Xcode*) printf './Applications/Xcode.app\\n';; *) printf './Applications/Vital.app\\n';; esac\n", to: lsbom, executable: true)
@@ -205,6 +205,7 @@ final class SourceTests: XCTestCase {
         XCTAssertEqual(receipts.packages(for: "/Applications/Vital.app"), ["audio.vital.synth"])
         XCTAssertEqual(receipts.packages(for: "/applications/vital.app"), ["audio.vital.synth"], "paths compare case-insensitively")
         XCTAssertEqual(receipts.packages(for: "/Applications/Xcode.app"), [], "Apple's packages are skipped")
+        XCTAssertEqual(receipts.files(for: "audio.vital.synth"), PackageReceipts.Files(plist: system.receipts.appending(path: "vital-installer-record.plist").path, bom: system.receipts.appending(path: "vital-installer-record.bom").path))
     }
 
     func testBrokenReceiptBOMMakesTheReceiptIndexIncomplete() throws {
@@ -220,6 +221,22 @@ final class SourceTests: XCTestCase {
         XCTAssertFalse(scan.complete)
         XCTAssertTrue(scan.receipts.listings.isEmpty)
         XCTAssertTrue(scan.warnings.contains { $0.contains(identifier) && $0.contains("lsbom exited 42") }, "\(scan.warnings)")
+    }
+
+    func testDuplicateReceiptIdentifierMakesTheIndexIncomplete() throws {
+        let system = try FakeSystem()
+        for stem in ["first-record", "second-record"] {
+            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": "com.example.duplicate", "InstallPrefixPath": "/"], format: .xml, options: 0)
+                .write(to: system.receipts.appending(path: "\(stem).plist"))
+            try system.write("bom", to: system.receipts.appending(path: "\(stem).bom"))
+        }
+        let lsbom = system.root.appending(path: "bin/lsbom")
+        try system.write("#!/bin/sh\nprintf './Applications/Example.app\\n'\n", to: lsbom, executable: true)
+
+        let scan = PackageReceipts.scan(directory: system.receipts, lsbom: lsbom)
+        XCTAssertFalse(scan.complete)
+        XCTAssertNil(scan.receipts.files(for: "com.example.duplicate"))
+        XCTAssertTrue(scan.warnings.contains { $0.contains("multiple files") && $0.contains("first-record.plist") && $0.contains("second-record.plist") }, "\(scan.warnings)")
     }
 
     func testSourcePriority() {

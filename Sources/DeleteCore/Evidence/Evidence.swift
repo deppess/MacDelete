@@ -5,7 +5,8 @@ public enum EvidenceTier: String, Sendable, Codable {
     /// Named by the app's identifier, its entitlements, its receipt, or its own launch item:
     /// selected by default.
     case exact
-    /// Matched only by the app's name: shown, selected only with --include-name-matches.
+    /// Matched only by the app's name: lower-confidence evidence, but included in the displayed
+    /// and confirmed deletion plan.
     case name
 }
 

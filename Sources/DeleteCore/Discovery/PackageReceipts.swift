@@ -5,6 +5,16 @@ import Foundation
 /// (`lsbom -s`), in parallel, while the apps are scanned (~35 ms for every package on a typical
 /// Mac); plans then look things up here instead of running `lsbom` or `pkgutil` again.
 public struct PackageReceipts: Sendable {
+    /// The receipt files that prove an identifier currently exists. The receipt identifier is not
+    /// necessarily its file name, so callers must never construct these paths from the identifier.
+    public struct Files: Sendable, Equatable {
+        public var plist: String
+        public var bom: String
+        public init(plist: String, bom: String) {
+            self.plist = plist
+            self.bom = bom
+        }
+    }
     private struct ListingError: Error, LocalizedError {
         var message: String
         var errorDescription: String? { message }
@@ -20,15 +30,19 @@ public struct PackageReceipts: Sendable {
     public var listings: [String: [String]]
     /// The same paths lowercased, for lookups (made once, while the apps are scanned).
     public var lowercasedListings: [String: Set<String>]
+    /// Actual plist and BOM paths by receipt identifier, retained for approval binding before
+    /// `pkgutil --forget`. Identifiers and receipt file stems can differ.
+    public var filesByIdentifier: [String: Files]
 
-    public init(packagesByApplication: [String: [String]] = [:], listings: [String: [String]] = [:]) {
+    public init(packagesByApplication: [String: [String]] = [:], listings: [String: [String]] = [:], filesByIdentifier: [String: Files] = [:]) {
         self.packagesByApplication = packagesByApplication
         self.listings = listings
         lowercasedListings = listings.mapValues { Set($0.map { $0.lowercased() }) }
+        self.filesByIdentifier = filesByIdentifier
     }
 
-    private init(packagesByApplication: [String: [String]], listings: [String: [String]], lowercasedListings: [String: Set<String>]) {
-        (self.packagesByApplication, self.listings, self.lowercasedListings) = (packagesByApplication, listings, lowercasedListings)
+    private init(packagesByApplication: [String: [String]], listings: [String: [String]], lowercasedListings: [String: Set<String>], filesByIdentifier: [String: Files]) {
+        (self.packagesByApplication, self.listings, self.lowercasedListings, self.filesByIdentifier) = (packagesByApplication, listings, lowercasedListings, filesByIdentifier)
     }
 
     /// Whether any package but these lists the (lowercased) path.
@@ -38,6 +52,10 @@ public struct PackageReceipts: Sendable {
 
     public func packages(for path: String) -> [String] {
         packagesByApplication[URL(filePath: path).standardizedFileURL.path.lowercased()] ?? []
+    }
+
+    public func files(for identifier: String) -> Files? {
+        filesByIdentifier[identifier]
     }
 
     /// Apple's own packages are skipped: App Store installs of Apple apps leave receipts too
@@ -51,7 +69,7 @@ public struct PackageReceipts: Sendable {
             return Scan(receipts: PackageReceipts(), warnings: ["Unable to read installer receipts: \(directory.path)"])
         }
         var warnings: [String] = []
-        let receipts: [(identifier: String, prefix: String, bom: URL)] = names.filter { $0.hasSuffix(".plist") }.sorted().compactMap { name in
+        let discovered: [(identifier: String, prefix: String, plist: URL, bom: URL)] = names.filter { $0.hasSuffix(".plist") }.sorted().compactMap { name in
             let plist = directory.appending(path: name)
             guard let info = SmallFile.plist(atPath: plist.path) else {
                 warnings.append("Unable to read installer receipt: \(plist.path)")
@@ -64,8 +82,20 @@ public struct PackageReceipts: Sendable {
                 warnings.append("Installer receipt \(identifier) has no BOM: \(bom.path)")
                 return nil
             }
-            return (identifier, (info["InstallPrefixPath"] as? String) ?? "/", bom)
+            return (identifier, (info["InstallPrefixPath"] as? String) ?? "/", plist, bom)
         }
+        // A package identifier is the unit `pkgutil --forget` acts on. If two plist files claim
+        // it, there is no unambiguous plist/BOM pair to bind into the approval, so refuse real
+        // deletion by making the inventory incomplete instead of letting dictionary assignment
+        // choose one arbitrarily.
+        let duplicateIdentifiers = Set(discovered.map { $0.identifier.lowercased() }.filter { identifier in
+            discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.count > 1
+        })
+        for identifier in duplicateIdentifiers.sorted() {
+            let files = discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.map { $0.plist.path }.sorted().joined(separator: ", ")
+            warnings.append("Installer receipt identifier \(identifier) appears in multiple files: \(files)")
+        }
+        let receipts = discovered.filter { !duplicateIdentifiers.contains($0.identifier.lowercased()) }
         let results = UnsafeResults<(paths: [String], lowered: Set<String>, warning: String?)>(count: receipts.count)
         DispatchQueue.concurrentPerform(iterations: receipts.count) { index in
             let receipt = receipts[index]
@@ -77,15 +107,17 @@ public struct PackageReceipts: Sendable {
         var map: [String: [String]] = [:]
         var listings: [String: [String]] = [:]
         var lowercased: [String: Set<String>] = [:]
+        var files: [String: Files] = [:]
         for (receipt, result) in zip(receipts, results.values) {
             if let warning = result.warning { warnings.append(warning); continue }
             let (paths, lowered) = (result.paths, result.lowered)
             (listings[receipt.identifier], lowercased[receipt.identifier]) = (paths, lowered)
+            files[receipt.identifier] = Files(plist: receipt.plist.path, bom: receipt.bom.path)
             for path in applicationPaths(paths) where !(map[path.lowercased()]?.contains(receipt.identifier) ?? false) {
                 map[path.lowercased(), default: []].append(receipt.identifier)
             }
         }
-        return Scan(receipts: PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased), warnings: warnings)
+        return Scan(receipts: PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased, filesByIdentifier: files), warnings: warnings)
     }
 
     /// The absolute paths a BOM lists, or none when it can't be read.

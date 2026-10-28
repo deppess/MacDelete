@@ -176,14 +176,17 @@ final class RuleTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: bins[0].appending(path: "other"), withDestinationURL: other.appending(path: "Contents/MacOS/other"))
         try FileManager.default.createSymbolicLink(at: bins[0].appending(path: "dangling"), withDestinationURL: system.root.appending(path: "gone"))
         try system.write("copy", to: bins[0].appending(path: "example-copy"))
+        try system.write("bin", to: bins[2].appending(path: "Example"), executable: true)
 
         let plan = try system.plan("Example")
         XCTAssertEqual(Set(plan.findings.filter { $0.reason == "command-line link into the app" }.map { URL(filePath: $0.path).lastPathComponent }), ["example", "example2", "chain"])
+        XCTAssertEqual(plan.findings.filter { $0.reason == "command-line executable named after the app" }.map(\.path), [bins[2].appending(path: "Example").path])
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
             .run(plan, targets: Executor.targets(for: plan.selected(includeNameMatches: false)), isRoot: false, casks: [])
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertNotNil(FileIdentity.of(bins[0].appending(path: "other").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: bins[0].appending(path: "example-copy").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bins[2].appending(path: "Example").path), "name evidence is never removed without --include-name-matches")
     }
 
     /// Plug-ins outside the bundle, by their own identifier.
@@ -233,15 +236,16 @@ final class RuleTests: XCTestCase {
     func testXDGSystemSharedAndHelpNameEvidence() throws {
         let system = try FakeSystem()
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app", "CFBundleExecutable": "Example"])
-        let paths = ["Users/tester/.local/share/example/", "Users/tester/.cache/Example/", "Users/tester/.local/state/example/", "Library/Application Support/Example/",
-                     "Library/Logs/Example 2/", "Users/Shared/Example/", "Users/tester/Library/Caches/com.apple.helpd/Generated/Example Help*1.0/",
-                     "Library/Logs/DiagnosticReports/Example_2026-10-26-101010_mac.diag"]
+        let paths = ["Users/tester/.example/", "Users/tester/Example/", "Users/tester/.local/share/example/", "Users/tester/.cache/Example/", "Users/tester/.local/state/example/", "Library/Application Support/Example/",
+                      "Library/Logs/Example 2/", "Users/Shared/Example/", "Users/tester/Library/Caches/com.apple.helpd/Generated/Example Help*1.0/",
+                      "Library/Logs/DiagnosticReports/Example_2026-10-26-101010_mac.diag"]
         for path in paths { try system.touch(path) }
         try system.touch("Users/tester/.local/share/other/")
         let plan = try system.plan("Example")
         XCTAssertEqual(relative(plan.findings, system, tier: .name), Set(paths.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }))
         XCTAssertTrue(plan.selected(includeNameMatches: false).allSatisfy { $0.tier == .exact }, "never selected by default")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/Shared/Example") }?.reason, "named after the app, shared by all users")
+        XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/tester/Example") }?.reason, "named after the app; may hold your own files")
         for folder in [".local/share", ".local/state", ".local/bin", ".cache", "bin"] {
             XCTAssertTrue(Protection.isProtected(system.home.appending(path: folder).path, roots: system.roots), folder)
         }

@@ -270,13 +270,13 @@ check)
         report data "$library/Preferences/$id.plist"
         report data "$library/Saved Application State/$id.savedState"
         report temp "${cache%/}/$id"; report temp "${temp%/}/$id"
-        [[ -e "$library/Application Support/$name" ]] && print "  NAME   ~/Library/Application Support/$name (name match: stays unless --include-name-matches)"
+        report "name-derived data" "$library/Application Support/$name"
         case $id in
         *.plain)
             report "updater cache" "$library/Caches/$id.ShipIt"
             report "cookies" "$library/Cookies/$id.binarycookies"
-            [[ -e "$HOME/.local/share/deletetest-plain" ]] && print "  NAME   ~/.local/share/deletetest-plain (name match)"
-            [[ -e "/Users/Shared/DeleteTest Plain" ]] && print "  NAME   /Users/Shared/DeleteTest Plain (name match)"
+            report "name-derived data" "$HOME/.local/share/deletetest-plain"
+            report "name-derived data" "/Users/Shared/DeleteTest Plain"
             report "command link" "$HOME/.local/bin/deletetest-plain"
             report "QuickLook plug-in" "$library/QuickLook/DeleteTest Preview.qlgenerator"
             report "launch agent" "$library/LaunchAgents/$id.agent.plist"
