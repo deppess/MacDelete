@@ -64,4 +64,5 @@ Scripts/testapps clean                     # then: remove the disposable-app bui
 
 GPL-3.0-or-later. See [`COPYING`](COPYING) for the license, [`NOTICE`](NOTICE) for code taken
 from Sift and Mole, [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and safety rules, and
+[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for security boundaries, and
 [`CHANGELOG.md`](CHANGELOG.md) for release history.

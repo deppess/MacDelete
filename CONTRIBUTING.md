@@ -23,6 +23,8 @@ Do not weaken `.claude/hooks/guard-delete.py`. A destructive run must retain the
 - an ambiguous, shared, protected, unreadable, changed, or unsupported artifact is left alone;
 - a failed launch-item stop blocks deletion before any group member is removed.
 
+The complete trust boundaries and invariants are in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
 ## Development checks
 
 Run these before submitting a behavior or safety change:
