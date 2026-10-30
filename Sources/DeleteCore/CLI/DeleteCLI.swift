@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 public enum DeleteCLI {
-    public static let version = "2.0.0"
+    public static let version = "2.0.1"
 
     public static let usage = """
     Usage:
