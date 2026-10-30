@@ -195,57 +195,19 @@ public enum DeleteCLI {
 
         let elevate = elevates(plans)
         let asRoot = isRoot || elevate
-        // What's deleted must be what was shown: identities are taken before asking. A finding
-        // that vanished here must not silently drop out of `targets`; make a fresh plan instead.
-        let selected = plans.map { $0.split(isRoot: asRoot).deleting }
-        let translator: (String) -> String
-        if let sandbox { translator = { sandbox.translate($0) } } else { translator = { $0 } }
-        let unavailable = selected.flatMap { Executor.unavailableTargets(for: $0, translate: translator) }
-        guard unavailable.isEmpty || sandbox != nil else {
-            printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + unavailable.map { "  \(Format.path($0.path, home: roots.home))" }.joined(separator: "\n"))
+        let prepared: PreparedRemoval
+        do {
+            prepared = try PreparedRemoval.prepare(
+                plans: plans,
+                receipts: inventory.receipts,
+                isRoot: isRoot,
+                sandbox: sandbox,
+                home: roots.home)
+        } catch {
+            printError(error.message(home: roots.home))
             return EXIT_FAILURE
         }
-        let targets = selected.map { Executor.targets(for: $0, translate: translator) }
-        let launchCaptures = plans.map { Executor.launchTargets(for: $0.launchItems, translate: translator) }
-        let launchTargets = launchCaptures.map(\.targets)
-        let missingLaunchItems = launchCaptures.flatMap(\.unavailable)
-        guard missingLaunchItems.isEmpty || sandbox != nil else {
-            printError("A launch item changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingLaunchItems.map(\.plist).sorted().map { "  \(Format.path($0, home: roots.home))" }.joined(separator: "\n"))
-            return EXIT_FAILURE
-        }
-        let receiptCaptures = plans.map { Executor.receiptTargets(for: $0.packages, receipts: inventory.receipts) }
-        let receiptTargets = receiptCaptures.map(\.targets)
-        let missingReceipts = receiptCaptures.flatMap(\.unavailable)
-        guard missingReceipts.isEmpty || sandbox != nil else {
-            printError("The installer receipt records changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingReceipts.sorted().map { "  \($0)" }.joined(separator: "\n"))
-            return EXIT_FAILURE
-        }
-        let emptyTargets: [[String: RemovalTarget]] = plans.map { plan in
-            Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { folder in
-                let path = translator(folder)
-                return FileIdentity.of(path).map { (folder, RemovalTarget(path: path, identity: $0)) }
-            })
-        }
-        let missingEmpty = zip(plans, emptyTargets).flatMap { plan, targets in plan.emptyFolders.filter { targets[$0] == nil } }
-        guard missingEmpty.isEmpty || sandbox != nil else {
-            printError("The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + missingEmpty.map { "  \(Format.path($0, home: roots.home))" }.joined(separator: "\n"))
-            return EXIT_FAILURE
-        }
-        var approvalIdentities: [String: FileIdentity] = [:]
-        for items in targets { for item in items { approvalIdentities["delete:\(item.finding.path)"] = item.target.identity } }
-        for records in receiptTargets {
-            for (package, targets) in records {
-                approvalIdentities["receipt:\(package):plist"] = targets.plist.identity
-                approvalIdentities["receipt:\(package):bom"] = targets.bom.identity
-            }
-        }
-        for records in launchTargets {
-            for (key, target) in records {
-                approvalIdentities["launchctl:\(key)"] = target.target.identity
-            }
-        }
-        for items in emptyTargets { for (path, target) in items { approvalIdentities["rmdir:\(path)"] = target.identity } }
-        let fingerprint = RemovalPlan.fingerprint(plans, identities: approvalIdentities)
+        let fingerprint = prepared.fingerprint
         // Delete's rerun under sudo goes ahead without asking when it found what was confirmed.
         let confirmed = invocation.approved == fingerprint
         if let approved = invocation.approved, !confirmed, !approved.isEmpty {
@@ -271,7 +233,7 @@ public enum DeleteCLI {
         if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(group: plans, targets: targets, emptyTargets: emptyTargets, launchTargets: launchTargets, receiptTargets: receiptTargets, isRoot: isRoot, casks: inventory.casks)
+        let report = executor.run(group: plans, targets: prepared.findingTargets, emptyTargets: prepared.emptyFolderTargets, launchTargets: prepared.launchTargets, receiptTargets: prepared.receiptTargets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         let needingRoot = plans.flatMap { $0.split(isRoot: isRoot).needingRoot }
