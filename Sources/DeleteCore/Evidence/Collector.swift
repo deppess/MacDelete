@@ -63,7 +63,9 @@ struct Collector {
                 skip(finding.path, Protection.protectedReason(finding.path, roots: roots))
                 continue
             }
-            if !isExempt || checkedForOtherApps.contains(lowered), lowerOthers.contains(where: { $0 == lowered || $0.hasPrefix(lowered + "/") || lowered.hasPrefix($0 + "/") }) {
+            if !isExempt || checkedForOtherApps.contains(lowered),
+                lowerOthers.contains(where: { $0 == lowered || $0.hasPrefix(lowered + "/") || lowered.hasPrefix($0 + "/") })
+            {
                 skip(finding.path, "belongs to another installed app")
                 continue
             }

@@ -38,22 +38,28 @@ public enum Companions {
     }
 
     /// `team` reads a bundle's developer team (tests stand in for real signatures).
-    public static func find(for application: InstalledApp, inventory: Inventory, roots: Roots,
-                            team teamOf: @Sendable (String) -> String? = { SigningInfo.read(URL(filePath: $0, directoryHint: .isDirectory))?.teamIdentifier }) -> Result {
+    public static func find(
+        for application: InstalledApp, inventory: Inventory, roots: Roots,
+        team teamOf: @Sendable (String) -> String? = { SigningInfo.read(URL(filePath: $0, directoryHint: .isDirectory))?.teamIdentifier }
+    ) -> Result {
         guard application.classification == .user, application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") != true else { return Result() }
         var result = Result()
         var reasons: [(InstalledApp, String)] = []
         var inseparable = Set<String>()
         let byPath = Dictionary(inventory.applications.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
         func isOther(_ other: InstalledApp) -> Bool {
-            other.path != application.path && other.bundlePath != application.bundlePath && other.classification != .system && other.bundleIdentifier?.lowercased().hasPrefix("com.apple.") != true
+            other.path != application.path && other.bundlePath != application.bundlePath && other.classification != .system
+                && other.bundleIdentifier?.lowercased().hasPrefix("com.apple.") != true
         }
 
         // Homebrew cask: brew removes all of its apps together.
         if case let .homebrew(token, true) = application.source, let cask = inventory.casks.first(where: { $0.token == token }) {
             var paths = Set(cask.appPaths.map { $0.lowercased() })
-            for other in inventory.applications where cask.suitePaths.contains(where: { other.path.lowercased().hasPrefix($0.lowercased() + "/") }) { paths.insert(other.path.lowercased()) }
-            for (path, packages) in inventory.receipts.packagesByApplication where packages.contains(where: { identifier in cask.packagePatterns.contains { Caskroom.package(identifier, matches: $0) } }) {
+            for other in inventory.applications where cask.suitePaths.contains(where: { other.path.lowercased().hasPrefix($0.lowercased() + "/") }) {
+                paths.insert(other.path.lowercased())
+            }
+            for (path, packages) in inventory.receipts.packagesByApplication
+            where packages.contains(where: { identifier in cask.packagePatterns.contains { Caskroom.package(identifier, matches: $0) } }) {
                 paths.insert(path)
             }
             for other in paths.compactMap({ byPath[$0] }) where isOther(other) {
@@ -67,8 +73,12 @@ public enum Companions {
         let vendor = application.bundleIdentifier.flatMap(EvidenceFinder.vendor)
         let ownName = normalized(application.name)
         let folder = URL(filePath: application.path).deletingLastPathComponent().standardizedFileURL.path
-        let isApplicationsFolder = roots.applicationRoots.contains { $0.url.standardizedFileURL.resolvingSymlinksInPath().path.lowercased() == folder.lowercased() }
-        let inFolder = { (other: InstalledApp) in !isApplicationsFolder && other.classification == .user && other.path.lowercased().hasPrefix(folder.lowercased() + "/") }
+        let isApplicationsFolder = roots.applicationRoots.contains {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath().path.lowercased() == folder.lowercased()
+        }
+        let inFolder = { (other: InstalledApp) in
+            !isApplicationsFolder && other.classification == .user && other.path.lowercased().hasPrefix(folder.lowercased() + "/")
+        }
         let ownPackages = inventory.receipts.packages(for: application.path)
         var installedBy: [String: Set<String>] = [:]
         for (path, packages) in inventory.receipts.packagesByApplication {
@@ -76,9 +86,10 @@ public enum Companions {
         }
         let packagePeers = installedBy.values.reduce(into: Set<String>()) { $0.formUnion($1) }
         let candidates = inventory.applications.filter { other in
-            isOther(other) && ((vendor != nil && other.bundleIdentifier.flatMap(EvidenceFinder.vendor) == vendor) || inFolder(other)
-                || packagePeers.contains(other.path.lowercased())
-                || (other.classification == .user && uninstalls(other, application: ownName)))
+            isOther(other)
+                && ((vendor != nil && other.bundleIdentifier.flatMap(EvidenceFinder.vendor) == vendor) || inFolder(other)
+                    || packagePeers.contains(other.path.lowercased())
+                    || (other.classification == .user && uninstalls(other, application: ownName)))
         }
         var sameTeam: [InstalledApp] = []
         if !candidates.isEmpty, let team = teamOf(application.bundlePath) {
@@ -167,7 +178,7 @@ public enum Companions {
         for word in ["uninstaller", "uninstall"] {
             if key.hasPrefix(word) {
                 key = String(key.dropFirst(word.count))
-                if key.hasPrefix("for") { key = String(key.dropFirst(3)) } // "Uninstaller for Vuze"
+                if key.hasPrefix("for") { key = String(key.dropFirst(3)) }  // "Uninstaller for Vuze"
                 return key.count >= 4 ? key : nil
             }
             if key.hasSuffix(word) { key = String(key.dropLast(word.count)); return key.count >= 4 ? key : nil }

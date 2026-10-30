@@ -13,7 +13,8 @@ public struct SigningInfo: Sendable, Equatable {
         guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code else { return nil }
         var information: CFDictionary?
         guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
-              let dictionary = information as? [String: Any] else { return nil }
+            let dictionary = information as? [String: Any]
+        else { return nil }
         let entitlements = dictionary[kSecCodeInfoEntitlementsDict as String] as? [String: Any]
         let groups = (entitlements?["com.apple.security.application-groups"] as? [String] ?? []).filter(isPlausibleGroup)
         return SigningInfo(teamIdentifier: (dictionary[kSecCodeInfoTeamIdentifier as String] as? String)?.nonEmpty, applicationGroups: groups)
@@ -37,10 +38,15 @@ public enum EmbeddedBundles {
 
     public static func find(in bundle: URL, mainIdentifier: String?, limit: Int = 256) -> [Embedded] {
         let contents = bundle.appending(path: "Contents", directoryHint: .isDirectory)
-        guard let enumerator = FileManager.default.enumerator(at: contents, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [], errorHandler: { _, _ in true }) else { return [] }
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: contents, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [], errorHandler: { _, _ in true })
+        else { return [] }
         // Folders that hold resources or code but never bundles of their own; skipping them keeps
         // a 4 GB app like Xcode from being walked file by file.
-        let skipped: Set<String> = ["resources", "_codesignature", "headers", "privateheaders", "modules", "_masreceipt", "sharedsupport", "developer", "platforms"]
+        let skipped: Set<String> = [
+            "resources", "_codesignature", "headers", "privateheaders", "modules", "_masreceipt", "sharedsupport", "developer", "platforms"
+        ]
         let bundleExtensions: Set<String> = ["app", "appex", "xpc", "systemextension"]
         var found: [Embedded] = []
         var seen = Set<String>()
@@ -52,7 +58,8 @@ public enum EmbeddedBundles {
             if name == "sharedsupport" {
                 // Not walked (Xcode's holds tens of thousands of files), but apps directly in it
                 // count: Office keeps its shared helpers there (Microsoft Error Reporting).
-                for child in (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] where child.pathExtension.lowercased() == "app" {
+                for child in (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+                where child.pathExtension.lowercased() == "app" {
                     if let item = embedded(child, seen: &seen) { found.append(item) }
                 }
                 enumerator.skipDescendants()
@@ -71,9 +78,10 @@ public enum EmbeddedBundles {
         guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
         let plist = url.appending(path: "Contents/Info.plist")
         guard let metadata = SmallFile.plist(atPath: plist.path),
-              let identifier = (metadata["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              isReverseDNS(identifier), !identifier.lowercased().hasPrefix("org.sparkle-project."),
-              seen.insert(identifier.lowercased()).inserted else { return nil }
+            let identifier = (metadata["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            isReverseDNS(identifier), !identifier.lowercased().hasPrefix("org.sparkle-project."),
+            seen.insert(identifier.lowercased()).inserted
+        else { return nil }
         return Embedded(identifier: identifier, path: url.path)
     }
 

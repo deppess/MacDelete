@@ -23,7 +23,9 @@ enum CommandLinks {
         let matches = UnsafeResults<Bool>(count: links.count)
         DispatchQueue.concurrentPerform(iterations: links.count) { index in
             var info = stat()
-            guard lstat(links[index], &info) == 0, info.st_mode & S_IFMT == S_IFLNK, let target = realpath(links[index], nil) else { matches[index] = false; return }
+            guard lstat(links[index], &info) == 0, info.st_mode & S_IFMT == S_IFLNK, let target = realpath(links[index], nil) else {
+                matches[index] = false; return
+            }
             matches[index] = String(cString: target).hasPrefix(bundle)
             free(target)
         }
@@ -37,9 +39,11 @@ enum CommandLinks {
 /// identifier is (or is a sub-identifier of) one of the app's, by the same ownership rules as
 /// every other item. One named after the app is name evidence only.
 enum PluginBundles {
-    static let folders = ["QuickLook", "Spotlight", "Screen Savers", "PreferencePanes", "Services", "Keyboard Layouts", "Frameworks", "ColorPickers", "Internet Plug-Ins",
-                          "Contextual Menu Items", "Audio/Plug-Ins/Components", "Audio/Plug-Ins/VST", "Audio/Plug-Ins/VST3", "Audio/Plug-Ins/HAL", "Audio/Plug-Ins/CLAP",
-                          "Audio/MIDI Drivers", "CoreMediaIO/Plug-Ins/DAL"]
+    static let folders = [
+        "QuickLook", "Spotlight", "Screen Savers", "PreferencePanes", "Services", "Keyboard Layouts", "Frameworks", "ColorPickers", "Internet Plug-Ins",
+        "Contextual Menu Items", "Audio/Plug-Ins/Components", "Audio/Plug-Ins/VST", "Audio/Plug-Ins/VST3", "Audio/Plug-Ins/HAL", "Audio/Plug-Ins/CLAP",
+        "Audio/MIDI Drivers", "CoreMediaIO/Plug-Ins/DAL"
+    ]
 
     static func scan(application: InstalledApp, ownership: Ownership, roots: Roots, collector: inout Collector) -> (findings: [Finding], skipped: [Skipped]) {
         let names = Set(([application.name] + application.alternateNames).map { $0.lowercased() })

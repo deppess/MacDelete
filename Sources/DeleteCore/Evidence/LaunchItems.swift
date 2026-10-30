@@ -23,7 +23,7 @@ enum LaunchItemScan {
         let folders: [(URL, LaunchItem.Domain, String)] = [
             (roots.home.appending(path: "Library/LaunchAgents"), .user, "launch agent"),
             (roots.library.appending(path: "LaunchAgents"), .user, "launch agent"),
-            (roots.library.appending(path: "LaunchDaemons"), .system, "launch daemon"),
+            (roots.library.appending(path: "LaunchDaemons"), .system, "launch daemon")
         ]
         let lowerIdentifiers = Set(identifiers.map { $0.lowercased() })
         let lowerHelpers = Set(helperLabels.map { $0.lowercased() })
@@ -56,7 +56,8 @@ enum LaunchItemScan {
         }
         // Only regular files: a job may log to /dev/null or a terminal.
         var seen = Set<String>()
-        for (log, label) in ownLogs where !otherLogs.contains(log.lowercased()) && !log.lowercased().hasPrefix(bundlePrefix) && seen.insert(log.lowercased()).inserted {
+        for (log, label) in ownLogs
+        where !otherLogs.contains(log.lowercased()) && !log.lowercased().hasPrefix(bundlePrefix) && seen.insert(log.lowercased()).inserted {
             var info = stat()
             guard lstat(log, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { continue }
             result.findings.append(Finding(path: log, tier: .exact, reason: "log of \(label)"))
@@ -72,7 +73,9 @@ enum LaunchItemScan {
         if program.hasPrefix(helperTools), !program.dropFirst(helperTools.count).contains("/") {
             return [Finding(path: program, tier: .exact, reason: "helper tool run by \(label)")]
         }
-        let supportFolders = [roots.library.appending(path: "Application Support"), roots.home.appending(path: "Library/Application Support")].map { $0.standardizedFileURL.path + "/" }
+        let supportFolders = [roots.library.appending(path: "Application Support"), roots.home.appending(path: "Library/Application Support")].map {
+            $0.standardizedFileURL.path + "/"
+        }
         guard let support = supportFolders.first(where: { program.hasPrefix($0) }) else { return [] }
         var item = URL(filePath: program)
         // The outermost bundle holding the program, if any.
@@ -97,11 +100,15 @@ enum LaunchItemScan {
 
     static func read(_ plist: URL) -> Job? {
         guard let dictionary = SmallFile.plist(atPath: plist.path),
-              let label = (dictionary["Label"] as? String)?.nonEmpty else { return nil }
+            let label = (dictionary["Label"] as? String)?.nonEmpty
+        else { return nil }
         let program = (dictionary["Program"] as? String) ?? (dictionary["ProgramArguments"] as? [Any])?.first as? String
-        let associated: [String] = (dictionary["AssociatedBundleIdentifiers"] as? [String]) ?? ((dictionary["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])
+        let associated: [String] =
+            (dictionary["AssociatedBundleIdentifiers"] as? [String]) ?? ((dictionary["AssociatedBundleIdentifiers"] as? String).map { [$0] } ?? [])
         // Only absolute program paths are evidence; anything else is resolved through PATH.
-        let logs = ["StandardOutPath", "StandardErrorPath"].compactMap { dictionary[$0] as? String }.filter { $0.hasPrefix("/") }.map { URL(filePath: $0).standardizedFileURL.path }
+        let logs = ["StandardOutPath", "StandardErrorPath"].compactMap { dictionary[$0] as? String }.filter { $0.hasPrefix("/") }.map {
+            URL(filePath: $0).standardizedFileURL.path
+        }
         return Job(label: label, program: program.flatMap { $0.hasPrefix("/") ? $0 : nil }, associated: associated, logs: logs)
     }
 }

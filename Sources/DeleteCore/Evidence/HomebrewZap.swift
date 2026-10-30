@@ -11,10 +11,12 @@ enum HomebrewZap {
         var emptyFolders: [String] = []
     }
 
-        /// Exact for an installed cask, name evidence from
+    /// Exact for an installed cask, name evidence from
     /// the catalog's list otherwise. An item another installed app's identifier names stays,
     /// whatever the list says.
-    static func evidence(for application: InstalledApp, casks: [InstalledCask], catalog: (token: String, paths: [String])?, ownership: Ownership, home: URL) -> Evidence {
+    static func evidence(for application: InstalledApp, casks: [InstalledCask], catalog: (token: String, paths: [String])?, ownership: Ownership, home: URL)
+        -> Evidence
+    {
         var result = Evidence()
         func claimant(_ path: String) -> String? {
             switch ownership.owner(ofItemNamed: URL(filePath: path).lastPathComponent) {
@@ -82,7 +84,8 @@ enum HomebrewZap {
     /// app's file name or bundle identifier. Nil when there's no catalog or no single cask fits.
     static func catalogPaths(for application: InstalledApp, catalog: URL) -> (token: String, paths: [String])? {
         guard let file = newestCatalog(in: catalog),
-              let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
+            let data = try? Data(contentsOf: file, options: .mappedIfSafe)
+        else { return nil }
         let appFile = application.name + ".app"
         let needles = [appFile] + (application.bundleIdentifier.map { [$0] } ?? [])
         // Skip everything when the app isn't mentioned at all.
@@ -107,8 +110,9 @@ enum HomebrewZap {
                 candidates.append((token, apps, quits, paths))
             }
         } else if let outer = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let payloadText = outer["payload"] as? String,
-                  let casks = try? JSONSerialization.jsonObject(with: Data(payloadText.utf8)) as? [[String: Any]] {
+            let payloadText = outer["payload"] as? String,
+            let casks = try? JSONSerialization.jsonObject(with: Data(payloadText.utf8)) as? [[String: Any]]
+        {
             // The older public catalog: `artifacts` as [{"app": ["X.app"]}, {"zap": [{"trash": …}]}].
             for cask in casks {
                 guard let token = cask["token"] as? String else { continue }
@@ -124,10 +128,14 @@ enum HomebrewZap {
         }
         let identifier = application.bundleIdentifier?.lowercased()
         let byIdentifier = candidates.filter { candidate in identifier.map { id in candidate.quits.contains { $0.lowercased() == id } } ?? false }
-        let byName = candidates.filter { candidate in candidate.apps.contains { URL(filePath: $0).lastPathComponent.caseInsensitiveCompare(appFile) == .orderedSame } }
+        let byName = candidates.filter { candidate in
+            candidate.apps.contains { URL(filePath: $0).lastPathComponent.caseInsensitiveCompare(appFile) == .orderedSame }
+        }
         // Variants (`firefox`, `firefox@beta`) share an app name; one that names the bundle
         // identifier decides, otherwise the name must be unique.
-        let chosen = byIdentifier.count == 1 ? byIdentifier : byName.count == 1 ? byName : byName.filter { candidate in byIdentifier.contains { $0.token == candidate.token } }
+        let chosen =
+            byIdentifier.count == 1
+            ? byIdentifier : byName.count == 1 ? byName : byName.filter { candidate in byIdentifier.contains { $0.token == candidate.token } }
         guard chosen.count == 1, let match = chosen.first, !match.paths.isEmpty else { return nil }
         return (match.token, match.paths)
     }
@@ -160,8 +168,10 @@ enum HomebrewZap {
         }
     }
 
-    private static let fileExtensions: Set<String> = [".plist", ".log", ".app", ".savedstate", ".crash", ".ips", ".diag", ".db", ".json", ".txt", ".binarycookies",
-                                                      ".sfl2", ".sfl3", ".sfl4", ".bom", ".pkg", ".dmg", ".zip", ".lock", ".tmp", ".cache", ".sqlite"]
+    private static let fileExtensions: Set<String> = [
+        ".plist", ".log", ".app", ".savedstate", ".crash", ".ips", ".diag", ".db", ".json", ".txt", ".binarycookies",
+        ".sfl2", ".sfl3", ".sfl4", ".bom", ".pkg", ".dmg", ".zip", ".lock", ".tmp", ".cache", ".sqlite"
+    ]
 
     static func expand(_ pattern: String, home: URL) -> [String] {
         guard isSpecific(pattern) else { return [] }
@@ -170,7 +180,9 @@ enum HomebrewZap {
         var result = glob_t()
         defer { globfree(&result) }
         guard glob(expanded, GLOB_NOSORT, nil, &result) == 0 else { return [] }
-        return (0..<Int(result.gl_pathc)).compactMap { index in result.gl_pathv[index].map { String(cString: $0) } }.map { URL(filePath: $0).standardizedFileURL.path }
+        return (0..<Int(result.gl_pathc)).compactMap { index in result.gl_pathv[index].map { String(cString: $0) } }.map {
+            URL(filePath: $0).standardizedFileURL.path
+        }
     }
 
     private static func strings(_ directive: [String: Any], keys: [String]) -> [String] {
@@ -183,7 +195,8 @@ enum HomebrewZap {
     private static func newestCatalog(in folder: URL) -> URL? {
         let fileManager = FileManager.default
         let internalFolder = folder.appending(path: "internal", directoryHint: .isDirectory)
-        let candidates = ((try? fileManager.contentsOfDirectory(at: internalFolder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+        let candidates =
+            ((try? fileManager.contentsOfDirectory(at: internalFolder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
             .filter { $0.lastPathComponent.hasPrefix("packages.") && $0.lastPathComponent.hasSuffix(".jws.json") }
             + [folder.appending(path: "cask.jws.json")].filter { fileManager.fileExists(atPath: $0.path) }
         func modified(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
@@ -262,16 +275,17 @@ enum CatalogScanner {
                         let key = stringStart..<(index - 1)
                         if depth == 1 { depthOneKey = key } else { depthTwoKey = key }
                     }
-                } else if byte == 0x7B { // {
+                } else if byte == 0x7B {  // {
                     depth += 1
                     if depth == 2, UnsafeBufferPointer(rebasing: bytes[depthOneKey]).elementsEqual(casksKey) { inCasks = true; sawCasks = true }
                     if inCasks, depth == 3 { caskStart = index; caskToken = depthTwoKey }
-                } else if byte == 0x7D { // }
+                } else if byte == 0x7D {  // }
                     if inCasks, depth == 3 {
                         let slice = UnsafeBufferPointer(rebasing: bytes[caskStart...index])
                         if needleBytes.contains(where: { contains(slice, $0) }), let json = unescape(slice),
-                           let cask = try? JSONSerialization.jsonObject(with: Data(json)) as? [String: Any],
-                           let token = unescape(UnsafeBufferPointer(rebasing: bytes[caskToken])) {
+                            let cask = try? JSONSerialization.jsonObject(with: Data(json)) as? [String: Any],
+                            let token = unescape(UnsafeBufferPointer(rebasing: bytes[caskToken]))
+                        {
                             result.append((String(decoding: token, as: UTF8.self), cask))
                         }
                     }

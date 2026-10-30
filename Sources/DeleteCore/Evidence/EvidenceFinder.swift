@@ -16,8 +16,12 @@ public struct EvidenceFinder: Sendable {
     public func plan(for application: InstalledApp, inventory: Inventory, group: Set<String> = [], timing: Timing? = nil) throws(Refusal) -> RemovalPlan {
         if let refusal = Protection.refusal(for: application) { throw refusal }
         if case let .homebrew(token, true) = application.source,
-           let cask = inventory.casks.first(where: { $0.token == token }), !cask.mayReplicateUninstall {
-            throw Refusal(message: "\(application.name) was installed by Homebrew cask \(token), which has uninstall actions delete cannot yet model exactly (\(cask.unsupportedUninstallArtifacts.joined(separator: ", "))). Nothing was deleted; use Homebrew or the vendor's uninstaller until those actions are supported.")
+            let cask = inventory.casks.first(where: { $0.token == token }), !cask.mayReplicateUninstall
+        {
+            throw Refusal(
+                message:
+                    "\(application.name) was installed by Homebrew cask \(token), which has uninstall actions delete cannot yet model exactly (\(cask.unsupportedUninstallArtifacts.joined(separator: ", "))). Nothing was deleted; use Homebrew or the vendor's uninstaller until those actions are supported."
+            )
         }
         let bundle = URL(filePath: application.bundlePath, directoryHint: .isDirectory)
 
@@ -28,15 +32,20 @@ public struct EvidenceFinder: Sendable {
         // unrelated apps, so it's no evidence; only the app's name finds its files then.
         let placeholder = application.bundleIdentifier.flatMap { Self.isPlaceholder($0) ? $0 : nil }
         var identifiers: [String] = placeholder == nil ? application.bundleIdentifier.map { [$0] } ?? [] : []
-        for identifier in embedded.map(\.identifier) + helperLabels where !Self.isPlaceholder(identifier) && !identifiers.contains(where: { $0.caseInsensitiveCompare(identifier) == .orderedSame }) {
+        for identifier in embedded.map(\.identifier) + helperLabels
+        where !Self.isPlaceholder(identifier) && !identifiers.contains(where: { $0.caseInsensitiveCompare(identifier) == .orderedSame }) {
             identifiers.append(identifier)
         }
         if case let .homebrew(token, true) = application.source,
-           let cask = inventory.casks.first(where: { $0.token == token }), !cask.quitIdentifiers.isEmpty {
+            let cask = inventory.casks.first(where: { $0.token == token }), !cask.quitIdentifiers.isEmpty
+        {
             let known = Set(identifiers.map { $0.lowercased() })
             let unknown = cask.quitIdentifiers.filter { !known.contains($0.lowercased()) }
             guard unknown.isEmpty else {
-                throw Refusal(message: "\(application.name) was installed by Homebrew cask \(token), whose declared quit identifier\(unknown.count == 1 ? "" : "s") \(unknown.joined(separator: ", ")) does not belong to the app or an embedded component. Nothing was deleted; delete will not terminate an unrelated process.")
+                throw Refusal(
+                    message:
+                        "\(application.name) was installed by Homebrew cask \(token), whose declared quit identifier\(unknown.count == 1 ? "" : "s") \(unknown.joined(separator: ", ")) does not belong to the app or an embedded component. Nothing was deleted; delete will not terminate an unrelated process."
+                )
             }
         }
         // A helper app installed outside the bundle (iStat Menus keeps its agents' apps in
@@ -50,8 +59,9 @@ public struct EvidenceFinder: Sendable {
         }
         // A helper whose identifier isn't the app's own family (Office's shared error reporter) may
         // be embedded in other apps of the same vendor too; those apps are read to find out.
-        let ownership = Ownership(targetPath: application.bundlePath, targetIdentifiers: identifiers, otherApplications: others,
-                                  otherEmbedded: Self.sharedEmbedded(identifiers: identifiers, main: application.bundleIdentifier, others: others))
+        let ownership = Ownership(
+            targetPath: application.bundlePath, targetIdentifiers: identifiers, otherApplications: others,
+            otherEmbedded: Self.sharedEmbedded(identifiers: identifiers, main: application.bundleIdentifier, others: others))
         timing?.mark("  embedded bundles (\(embedded.count))")
         // How to describe an item that belongs to a helper rather than the app itself.
         var helperKinds: [String: String] = [:]
@@ -62,7 +72,9 @@ public struct EvidenceFinder: Sendable {
         let runner = self.runner
         let roots = self.roots
         let otherPaths = Set(others.flatMap { [$0.path, $0.bundlePath] })
-        let packagesTask = Concurrent { PackageEvidence.scan(application: application, receipts: inventory.receipts, roots: roots, otherApplicationPaths: otherPaths, runner: runner) }
+        let packagesTask = Concurrent {
+            PackageEvidence.scan(application: application, receipts: inventory.receipts, roots: roots, otherApplicationPaths: otherPaths, runner: runner)
+        }
         let groupsTask = Concurrent { Self.applicationGroups(bundle: bundle, embedded: embedded, others: others) }
         let catalogTask: Concurrent<(token: String, paths: [String])?>? = {
             if case .homebrew(_, true) = application.source { return nil }
@@ -71,27 +83,34 @@ public struct EvidenceFinder: Sendable {
 
         var collector = Collector(roots: roots)
         collector.add(Finding(path: application.path, tier: .exact), exempt: true)
-        if application.path != application.bundlePath { collector.add(Finding(path: application.bundlePath, tier: .exact, reason: "the app the link points to"), exempt: true) }
+        if application.path != application.bundlePath {
+            collector.add(Finding(path: application.bundlePath, tier: .exact, reason: "the app the link points to"), exempt: true)
+        }
 
         // Items named by an identifier.
         let library = roots.home.appending(path: "Library", directoryHint: .isDirectory)
         var identifierFolders: [(URL, String?)] = [
             "Application Support", "Caches", "Preferences", "Preferences/ByHost", "Containers", "Saved Application State", "HTTPStorages", "WebKit",
-            "Cookies", "Logs", "Application Scripts", "Autosave Information", "SyncedPreferences", "Input Methods", "Group Containers",
+            "Cookies", "Logs", "Application Scripts", "Autosave Information", "SyncedPreferences", "Input Methods", "Group Containers"
         ].map { (library.appending(path: $0, directoryHint: .isDirectory), nil) }
         identifierFolders += [
-            (library.appending(path: "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"), "recent documents list"),
+            (
+                library.appending(path: "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"),
+                "recent documents list"
+            ),
             (library.appending(path: "Caches/com.plausiblelabs.crashreporter.data"), "crash data"),
             // Help Viewer's copy of the app's help book (`<id>.help*<version>`).
             (library.appending(path: "Caches/com.apple.helpd/Generated"), "help cache"),
             (library.appending(path: "Caches/com.apple.nsurlsessiond/Downloads"), "background downloads"),
             (library.appending(path: "WebKit/Databases/___IndexedDB"), "web storage"),
-            (library.appending(path: "Preferences/com.apple.FileProvider"), "file provider settings"),
+            (library.appending(path: "Preferences/com.apple.FileProvider"), "file provider settings")
         ]
-        identifierFolders += ["Application Support", "Caches", "Preferences", "Logs", "Input Methods"].map { (roots.library.appending(path: $0, directoryHint: .isDirectory), nil) }
+        identifierFolders += ["Application Support", "Caches", "Preferences", "Logs", "Input Methods"].map {
+            (roots.library.appending(path: $0, directoryHint: .isDirectory), nil)
+        }
         identifierFolders += [
             (roots.library.appending(path: "PrivilegedHelperTools"), nil),
-            (roots.library.appending(path: "Receipts"), "old installer receipt"),
+            (roots.library.appending(path: "Receipts"), "old installer receipt")
         ]
         identifierFolders += [roots.userCache, roots.userTemp].compactMap { $0 }.map { ($0, "temporary files") }
         if let clones = roots.codeSigningClones { identifierFolders.append((clones, "code-signing copy")) }
@@ -103,7 +122,10 @@ public struct EvidenceFinder: Sendable {
                 case .target?:
                     let via = Self.matchedIdentifier(name, identifiers: identifiers)
                     let helperNote = via.flatMap { helperKinds[$0.lowercased()] }
-                    collector.add(Finding(path: folder.appending(path: name).path, tier: .exact, reason: [reason, helperNote].compactMap { $0 }.joined(separator: ", ").nonEmpty))
+                    collector.add(
+                        Finding(
+                            path: folder.appending(path: name).path, tier: .exact,
+                            reason: [reason, helperNote].compactMap { $0 }.joined(separator: ", ").nonEmpty))
                 case let .shared(other)?:
                     collector.skip(folder.appending(path: name).path, "also belongs to \(Format.path(other, home: roots.home))")
                 case .other?, nil:
@@ -119,7 +141,8 @@ public struct EvidenceFinder: Sendable {
         for name in collector.list(containers) where UUID(uuidString: name) != nil {
             let metadata = containers.appending(path: "\(name)/.com.apple.containermanagerd.metadata.plist")
             guard let info = SmallFile.plist(atPath: metadata.path),
-                  let owner = info["MCMMetadataIdentifier"] as? String, lowerIdentifiers.contains(owner.lowercased()) else { continue }
+                let owner = info["MCMMetadataIdentifier"] as? String, lowerIdentifiers.contains(owner.lowercased())
+            else { continue }
             collector.add(Finding(path: containers.appending(path: name).path, tier: .exact, reason: "container of \(owner)"))
         }
 
@@ -146,13 +169,17 @@ public struct EvidenceFinder: Sendable {
         // A cask's launchctl label is only a locator, never ownership evidence. The resolved
         // plist must independently belong to the app through its association, program, or the
         // complete ownership index.
-        let launch = LaunchItemScan.scan(roots: roots, bundlePath: application.bundlePath, identifiers: identifiers,
-                                          helperLabels: helperLabels, ownership: ownership)
+        let launch = LaunchItemScan.scan(
+            roots: roots, bundlePath: application.bundlePath, identifiers: identifiers,
+            helperLabels: helperLabels, ownership: ownership)
         if let cask, !cask.launchctlLabels.isEmpty {
             let found = Set(launch.items.map { $0.label.lowercased() })
             let missing = cask.launchctlLabels.filter { !found.contains($0.lowercased()) }
             if !missing.isEmpty {
-                throw Refusal(message: "\(application.name) was installed by Homebrew cask \(cask.token), whose declared launch item\(missing.count == 1 ? "" : "s") \(missing.joined(separator: ", ")) could not be resolved to an installed LaunchAgent or LaunchDaemon plist. Nothing was deleted; delete will not guess how to stop a launchd service.")
+                throw Refusal(
+                    message:
+                        "\(application.name) was installed by Homebrew cask \(cask.token), whose declared launch item\(missing.count == 1 ? "" : "s") \(missing.joined(separator: ", ")) could not be resolved to an installed LaunchAgent or LaunchDaemon plist. Nothing was deleted; delete will not guess how to stop a launchd service."
+                )
             }
         }
         launch.findings.forEach { collector.add($0) }
@@ -209,7 +236,8 @@ public struct EvidenceFinder: Sendable {
         let lowerEmpty = Set(emptyFolders.map { $0.lowercased() })
         findings.removeAll { lowerEmpty.contains($0.path.lowercased()) }
         // Other receipts the plan empties.
-        let coveredPackages = PackageEvidence.coveredPackages(findings: findings, application: application, excluding: packages.packages + packages.kept, receipts: inventory.receipts, roots: roots)
+        let coveredPackages = PackageEvidence.coveredPackages(
+            findings: findings, application: application, excluding: packages.packages + packages.kept, receipts: inventory.receipts, roots: roots)
         timing?.mark("  covered packages")
         Self.measure(&findings, knownBundle: application.size.map { (application.bundlePath, $0) })
         timing?.mark("  sizes")
@@ -218,14 +246,24 @@ public struct EvidenceFinder: Sendable {
         let running = RunningApps.isRunning(identifiers: identifiers, bundlePath: application.bundlePath)
         let activeExtensions = activeSystemExtensions(embedded: embedded)
         var notes: [String] = []
-        if let placeholder { notes.append("Its bundle identifier \(placeholder.terminalInline) is a template's placeholder that other apps share, so only its name was used to find its files.") }
-        notes += activeExtensions.map { "Its system extension \($0) is active. Deleting the app doesn't remove it; turn it off in the app (or System Settings › General › Login Items & Extensions) first." }
+        if let placeholder {
+            notes.append(
+                "Its bundle identifier \(placeholder.terminalInline) is a template's placeholder that other apps share, so only its name was used to find its files."
+            )
+        }
+        notes += activeExtensions.map {
+            "Its system extension \($0) is active. Deleting the app doesn't remove it; turn it off in the app (or System Settings › General › Login Items & Extensions) first."
+        }
         notes += PlanNotes.notes(for: application, bundle: bundle, findings: findings, others: others, roots: roots)
-        PlanNotes.cloudData(identifiers: identifiers, names: [application.name] + application.alternateNames, roots: roots).forEach { collector.skip($0.path, $0.reason) }
+        PlanNotes.cloudData(identifiers: identifiers, names: [application.name] + application.alternateNames, roots: roots).forEach {
+            collector.skip($0.path, $0.reason)
+        }
         PlanNotes.kernelExtensions(ownership: ownership, roots: roots).forEach { collector.skip($0.path, $0.reason) }
 
         // A folder that goes once empty isn't "kept" (Steam's, which its own rule empties).
-        let skipped = collector.skipped.filter { !lowerEmpty.contains($0.path.lowercased()) }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        let skipped = collector.skipped.filter { !lowerEmpty.contains($0.path.lowercased()) }.sorted {
+            $0.path.localizedStandardCompare($1.path) == .orderedAscending
+        }
         let caskPackages: [String]
         if let cask {
             caskPackages = inventory.receipts.listings.keys.filter { identifier in
@@ -234,8 +272,10 @@ public struct EvidenceFinder: Sendable {
         } else {
             caskPackages = []
         }
-        var plan = RemovalPlan(application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items, packages: Array(Set(packages.packages + coveredPackages + caskPackages)).sorted(),
-                               unreadable: unreadable, notes: notes, running: running, homebrewCask: zap.cask)
+        var plan = RemovalPlan(
+            application: application, identifiers: identifiers, findings: findings, skipped: skipped, launchItems: launch.items,
+            packages: Array(Set(packages.packages + coveredPackages + caskPackages)).sorted(),
+            unreadable: unreadable, notes: notes, running: running, homebrewCask: zap.cask)
         plan.activeSystemExtensions = activeExtensions
         plan.emptyFolders = emptyFolders
         plan.launchItems += extraLaunchItems.filter { item in !plan.launchItems.contains { $0.plist == item.plist } }
@@ -279,7 +319,8 @@ public struct EvidenceFinder: Sendable {
         let candidates = others.filter { $0.classification != .system }
         var result: [(identifier: String, path: String)] = []
         for other in candidates {
-            for item in EmbeddedBundles.find(in: URL(filePath: other.bundlePath, directoryHint: .isDirectory), mainIdentifier: other.bundleIdentifier) where lowerForeign.contains(item.identifier.lowercased()) {
+            for item in EmbeddedBundles.find(in: URL(filePath: other.bundlePath, directoryHint: .isDirectory), mainIdentifier: other.bundleIdentifier)
+            where lowerForeign.contains(item.identifier.lowercased()) {
                 result.append((item.identifier, other.path))
             }
         }
@@ -298,7 +339,9 @@ public struct EvidenceFinder: Sendable {
     static func applicationGroups(bundle: URL, embedded: [EmbeddedBundles.Embedded], others: [InstalledApp]) -> (own: [String], claimedBy: [String: String]) {
         var own: [String] = []
         for url in [bundle] + embedded.map({ URL(filePath: $0.path, directoryHint: .isDirectory) }) {
-            for group in SigningInfo.read(url)?.applicationGroups ?? [] where !own.contains(where: { $0.caseInsensitiveCompare(group) == .orderedSame }) { own.append(group) }
+            for group in SigningInfo.read(url)?.applicationGroups ?? [] where !own.contains(where: { $0.caseInsensitiveCompare(group) == .orderedSame }) {
+                own.append(group)
+            }
         }
         guard !own.isEmpty else { return ([], [:]) }
         let candidates = others.filter { $0.classification != .system }
@@ -317,8 +360,11 @@ public struct EvidenceFinder: Sendable {
     private func activeSystemExtensions(embedded: [EmbeddedBundles.Embedded]) -> [String] {
         let extensions = embedded.filter { $0.path.lowercased().hasSuffix(".systemextension") }
         guard !extensions.isEmpty,
-              let result = try? runner.run(executable: roots.tools.systemextensionsctl, arguments: ["list"], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 10, outputLimit: 1_048_576),
-              result.status == 0 else { return [] }
+            let result = try? runner.run(
+                executable: roots.tools.systemextensionsctl, arguments: ["list"], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 10,
+                outputLimit: 1_048_576),
+            result.status == 0
+        else { return [] }
         let lines = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n")
         return extensions.filter { item in lines.contains { $0.contains("\t\(item.identifier) (") && $0.contains("activated") } }.map(\.identifier)
     }

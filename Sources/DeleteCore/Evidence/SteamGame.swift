@@ -15,7 +15,7 @@ enum SteamGame {
         guard let game = game(for: application, inventory: inventory, home: home) else { return [] }
         var findings = [
             Finding(path: game.folder, tier: .exact, reason: "Steam game folder"),
-            Finding(path: game.manifest, tier: .exact, reason: "Steam manifest for app \(game.appID)"),
+            Finding(path: game.manifest, tier: .exact, reason: "Steam manifest for app \(game.appID)")
         ]
         for shortcut in inventory.applications where shortcut.isSteamShortcut && shortcutAppID(shortcut) == game.appID {
             findings.append(Finding(path: shortcut.path, tier: .exact, reason: "Steam shortcut"))
@@ -30,13 +30,16 @@ enum SteamGame {
             var libraries = [home.appending(path: "Library/Application Support/Steam/steamapps").path]
             for candidate in inventory.applications where candidate.path.range(of: "/steamapps/common/", options: .caseInsensitive) != nil {
                 if let game = gameContaining(candidate.path), game.appID == appID { return game }
-                if let range = candidate.path.range(of: "/steamapps/common/", options: .caseInsensitive) { libraries.append(String(candidate.path[..<range.lowerBound]) + "/steamapps") }
+                if let range = candidate.path.range(of: "/steamapps/common/", options: .caseInsensitive) {
+                    libraries.append(String(candidate.path[..<range.lowerBound]) + "/steamapps")
+                }
             }
             // A game without a bundle the scan found: its manifest names its folder.
             for steamapps in Set(libraries) {
                 let manifest = steamapps + "/appmanifest_\(appID).acf"
                 guard let text = manifestText(manifest), value("appid", in: text) == appID, let directory = value("installdir", in: text),
-                      !directory.isEmpty, !directory.contains("/"), directory != ".", directory != ".." else { continue }
+                    !directory.isEmpty, !directory.contains("/"), directory != ".", directory != ".."
+                else { continue }
                 let folder = steamapps + "/common/" + directory
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
@@ -54,13 +57,15 @@ enum SteamGame {
         guard let range = path.range(of: "/steamapps/common/", options: .caseInsensitive) else { return nil }
         let steamapps = String(path[..<range.lowerBound]) + "/steamapps"
         guard let installDirectory = path[range.upperBound...].split(separator: "/").first.map(String.init),
-              !installDirectory.isEmpty, installDirectory != ".", installDirectory != ".." else { return nil }
+            !installDirectory.isEmpty, installDirectory != ".", installDirectory != ".."
+        else { return nil }
         let folder = steamapps + "/common/" + installDirectory
         for name in (try? FileManager.default.contentsOfDirectory(atPath: steamapps)) ?? [] where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
             let manifest = steamapps + "/" + name
             guard let text = manifestText(manifest),
-                  let directory = value("installdir", in: text), directory.caseInsensitiveCompare(installDirectory) == .orderedSame,
-                  let appID = value("appid", in: text), appID.allSatisfy(\.isNumber) else { continue }
+                let directory = value("installdir", in: text), directory.caseInsensitiveCompare(installDirectory) == .orderedSame,
+                let appID = value("appid", in: text), appID.allSatisfy(\.isNumber)
+            else { continue }
             return Game(appID: appID, folder: folder, manifest: manifest)
         }
         return nil
@@ -110,8 +115,11 @@ enum SteamGame {
         for name in collector.list(steamapps) where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
             let manifest = steamapps.appending(path: name).path
             guard let text = manifestText(manifest), let directory = value("installdir", in: text), !directory.isEmpty, !directory.contains("/"),
-                  FileManager.default.fileExists(atPath: common.appending(path: directory).path) else { continue }
-            let title = others.first { $0.path.hasPrefix(common.appending(path: directory).path + "/") || $0.path == common.appending(path: directory).path }?.name ?? value("name", in: text) ?? directory
+                FileManager.default.fileExists(atPath: common.appending(path: directory).path)
+            else { continue }
+            let title =
+                others.first { $0.path.hasPrefix(common.appending(path: directory).path + "/") || $0.path == common.appending(path: directory).path }?.name
+                ?? value("name", in: text) ?? directory
             installed[directory.lowercased()] = (title, manifest)
         }
         let keptManifests = Set(installed.values.map(\.manifest))
@@ -126,7 +134,8 @@ enum SteamGame {
                 for game in collector.list(common) where !game.hasPrefix(".") {
                     let folder = common.appending(path: game).path
                     if let entry = installed[game.lowercased()] {
-                        result.skipped.append(Skipped(path: folder, reason: "\(entry.name) is installed: delete it first (delete \(Format.shellQuoted(entry.name)))"))
+                        result.skipped.append(
+                            Skipped(path: folder, reason: "\(entry.name) is installed: delete it first (delete \(Format.shellQuoted(entry.name)))"))
                     } else {
                         result.findings.append(Finding(path: folder, tier: .exact, reason: "files of a game Steam no longer lists"))
                     }
@@ -134,7 +143,10 @@ enum SteamGame {
             } else if keptManifests.contains(path) {
                 continue
             } else {
-                result.findings.append(Finding(path: path, tier: .exact, reason: name.hasPrefix("appmanifest_") ? "manifest of a game no longer installed" : "Steam's downloads and caches"))
+                result.findings.append(
+                    Finding(
+                        path: path, tier: .exact,
+                        reason: name.hasPrefix("appmanifest_") ? "manifest of a game no longer installed" : "Steam's downloads and caches"))
             }
         }
         result.emptyFolders = [common.path, steamapps.path, steam.path].filter { FileManager.default.fileExists(atPath: $0) }

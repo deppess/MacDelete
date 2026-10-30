@@ -14,7 +14,9 @@ enum PlanNotes {
             // Data folders only: not the app itself, a Steam game, or Steam's own client.
             finding.size >= largeSize && !["Steam's client and data", "Steam game folder"].contains(finding.reason ?? "")
                 && !finding.path.lowercased().contains("/application support/steam/") && folders.contains { finding.path.hasPrefix(library + $0) }
-        }.map { "\(Format.path($0.path, home: roots.home).terminalInline) is \(Format.size($0.size)): it may hold files of your own (documents, libraries, virtual machines). Check before deleting." }
+        }.map {
+            "\(Format.path($0.path, home: roots.home).terminalInline) is \(Format.size($0.size)): it may hold files of your own (documents, libraries, virtual machines). Check before deleting."
+        }
     }
 
     /// The app's iCloud folder (`~/Library/Mobile Documents/iCloud~com~vendor~app`), which syncs
@@ -26,17 +28,22 @@ enum PlanNotes {
         let mobile = roots.home.appending(path: "Library/Mobile Documents", directoryHint: .isDirectory)
         let icloudNames = Set(identifiers.map { "icloud~" + $0.lowercased().replacingOccurrences(of: ".", with: "~") })
         for name in (try? FileManager.default.contentsOfDirectory(atPath: mobile.path)) ?? [] where icloudNames.contains(name.lowercased()) {
-            kept.append(Skipped(path: mobile.appending(path: name).path, reason: "its iCloud data, which syncs to your other devices: remove it in System Settings › Apple Account › iCloud if you want it gone"))
+            kept.append(
+                Skipped(
+                    path: mobile.appending(path: name).path,
+                    reason: "its iCloud data, which syncs to your other devices: remove it in System Settings › Apple Account › iCloud if you want it gone"))
         }
         let storage = roots.home.appending(path: "Library/CloudStorage", directoryHint: .isDirectory)
-        let squeezed = Set(names.flatMap { name -> [String] in
-            let words = name.split(separator: " ").map(String.init)
-            return [words.joined(), words.dropFirst().joined()].filter { $0.count >= 3 }.map { $0.lowercased() }
-        })
+        let squeezed = Set(
+            names.flatMap { name -> [String] in
+                let words = name.split(separator: " ").map(String.init)
+                return [words.joined(), words.dropFirst().joined()].filter { $0.count >= 3 }.map { $0.lowercased() }
+            })
         for name in (try? FileManager.default.contentsOfDirectory(atPath: storage.path)) ?? [] {
             let provider = name.split(separator: "-").first.map { String($0).lowercased() } ?? ""
             if squeezed.contains(provider) {
-                kept.append(Skipped(path: storage.appending(path: name).path, reason: "your cloud files: sign out in the app first, then remove the folder yourself"))
+                kept.append(
+                    Skipped(path: storage.appending(path: name).path, reason: "your cloud files: sign out in the app first, then remove the folder yourself"))
             }
         }
         return kept
@@ -46,11 +53,13 @@ enum PlanNotes {
     static func isInDock(_ appPath: String, roots: Roots) -> Bool {
         let plist = roots.home.appending(path: "Library/Preferences/com.apple.dock.plist")
         guard let dock = SmallFile.plist(atPath: plist.path, limit: 8 * 1_048_576),
-              let tiles = dock["persistent-apps"] as? [[String: Any]] else { return false }
+            let tiles = dock["persistent-apps"] as? [[String: Any]]
+        else { return false }
         let target = URL(filePath: appPath, directoryHint: .isDirectory).standardizedFileURL.path
         return tiles.contains { tile in
             guard let file = (tile["tile-data"] as? [String: Any])?["file-data"] as? [String: Any],
-                  let string = file["_CFURLString"] as? String, let url = URL(string: string) ?? Optional(URL(filePath: string)) else { return false }
+                let string = file["_CFURLString"] as? String, let url = URL(string: string) ?? Optional(URL(filePath: string))
+            else { return false }
             return url.standardizedFileURL.path == target
         }
     }
@@ -70,13 +79,17 @@ enum PlanNotes {
     /// Notes about what the app installed and where it shows.
     static func notes(for application: InstalledApp, bundle: URL, findings: [Finding], others: [InstalledApp], roots: Roots) -> [String] {
         var notes: [String] = []
-        if ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains(where: { FileManager.default.fileExists(atPath: bundle.appending(path: $0).path) }) {
+        if ["Contents/Library/LoginItems", "Contents/Library/LaunchAgents", "Contents/Library/LaunchDaemons"].contains(where: {
+            FileManager.default.fileExists(atPath: bundle.appending(path: $0).path)
+        }) {
             notes.append("Its entries in System Settings › General › Login Items & Extensions are removed by macOS once the app is gone.")
         }
         notes += largeData(findings, roots: roots)
         let audioPlugins = findings.filter { $0.reason == "audio plug-in" }.count
         if audioPlugins > 0 {
-            notes.append("It installed \(audioPlugins) audio plug-in\(audioPlugins == 1 ? "" : "s") that other music apps load too: deleting it removes \(audioPlugins == 1 ? "it" : "them") from those apps as well.")
+            notes.append(
+                "It installed \(audioPlugins) audio plug-in\(audioPlugins == 1 ? "" : "s") that other music apps load too: deleting it removes \(audioPlugins == 1 ? "it" : "them") from those apps as well."
+            )
         }
         if findings.contains(where: { $0.reason == "audio driver" }) {
             notes.append("It installs an audio driver: restart audio afterwards (sudo killall coreaudiod) or log out and back in.")
@@ -95,7 +108,7 @@ enum PlanNotes {
     static let sharedUpdaters: [String: String] = [
         "com.microsoft.autoupdate2": "com.microsoft.", "com.microsoft.autoupdate.fba": "com.microsoft.",
         "com.google.keystone": "com.google.", "com.google.googleupdater": "com.google.",
-        "com.adobe.acc.adobecreativecloud": "com.adobe.",
+        "com.adobe.acc.adobecreativecloud": "com.adobe."
     ]
 
     /// Shared updaters that only this app still needed: no other app of their vendor remains.

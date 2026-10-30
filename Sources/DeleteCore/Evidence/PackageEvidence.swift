@@ -24,7 +24,8 @@ enum PackageEvidence {
     static func scan(application: InstalledApp, receipts: PackageReceipts, roots: Roots, otherApplicationPaths: Set<String>, runner: CommandRunner) -> Result {
         var packages = receipts.packages(for: application.path)
         if receipts.listings.isEmpty || application.bundleIdentifier?.lowercased().hasPrefix("com.apple.") == true {
-            for package in packagesInstalling(application.bundlePath, runner: runner, pkgutil: roots.tools.pkgutil) where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) {
+            for package in packagesInstalling(application.bundlePath, runner: runner, pkgutil: roots.tools.pkgutil)
+            where !packages.contains(where: { $0.caseInsensitiveCompare(package) == .orderedSame }) {
                 packages.append(package)
             }
         }
@@ -39,19 +40,29 @@ enum PackageEvidence {
         for package in packages {
             // Entries inside the app's bundle are covered by deleting the bundle (Xcode's
             // receipt lists 166,000 of them). Apple's receipts aren't in the index.
-            let paths = receipts.listings[package].map { $0.filter { !$0.lowercased().hasPrefix(bundle) } }
-                ?? listing(receipt: roots.receipts.appending(path: "\(package).plist"), runner: runner, lsbom: roots.tools.lsbom, excludingInside: application.bundlePath)
-            let items = ownedItems(paths, isShared: isShared, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
+            let paths =
+                receipts.listings[package].map { $0.filter { !$0.lowercased().hasPrefix(bundle) } }
+                ?? listing(
+                    receipt: roots.receipts.appending(path: "\(package).plist"), runner: runner, lsbom: roots.tools.lsbom,
+                    excludingInside: application.bundlePath)
+            let items = ownedItems(paths, isShared: isShared, root: roots.systemRoot).filter {
+                FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0)
+            }
             // A package that also installed another app still on the Mac (a suite like DaVinci
             // Resolve's) owns its files together with that app: none of them, and not its
             // receipt, belong to this app alone.
             let otherApp = items.lazy.compactMap { item -> String? in
                 let lowered = item.lowercased()
-                return otherApplicationPaths.first { let other = $0.lowercased(); return other == lowered || other.hasPrefix(lowered + "/") || lowered.hasPrefix(other + "/") }
+                return otherApplicationPaths.first {
+                    let other = $0.lowercased(); return other == lowered || other.hasPrefix(lowered + "/") || lowered.hasPrefix(other + "/")
+                }
             }.first
             if let otherApp {
                 let name = URL(filePath: otherApp).lastPathComponent
-                result.skipped.append(Skipped(path: roots.receipts.appending(path: "\(package).plist").path, reason: "package \(package) also installed \(name), so its files stay while that app is installed"))
+                result.skipped.append(
+                    Skipped(
+                        path: roots.receipts.appending(path: "\(package).plist").path,
+                        reason: "package \(package) also installed \(name), so its files stay while that app is installed"))
                 result.kept.append(package)
                 continue
             }
@@ -99,7 +110,9 @@ enum PackageEvidence {
     /// launch daemon): their receipts are forgotten too. Only items outside the home and
     /// per-user temporary folders can be a package's (packages don't install into them).
     static func coveredPackages(findings: [Finding], application: InstalledApp, excluding: [String], receipts: PackageReceipts, roots: Roots) -> [String] {
-        let skipped = ([roots.home] + [roots.userCache, roots.userTemp, roots.codeSigningClones].compactMap { $0 }).map { $0.standardizedFileURL.path.lowercased() + "/" }
+        let skipped = ([roots.home] + [roots.userCache, roots.userTemp, roots.codeSigningClones].compactMap { $0 }).map {
+            $0.standardizedFileURL.path.lowercased() + "/"
+        }
         let bundles = Set([application.path, application.bundlePath].map { $0.lowercased() })
         let deleted = findings.filter { $0.tier == .exact }.map { $0.path.lowercased() }
         let candidates = Set(deleted.filter { path in !bundles.contains(path) && !skipped.contains { path.hasPrefix($0) } })
@@ -111,8 +124,11 @@ enum PackageEvidence {
         let excluded = Set(excluding.map { $0.lowercased() })
         return receipts.listings.keys.sorted().filter { package in
             guard !excluded.contains(package.lowercased()), let paths = receipts.listings[package],
-                  receipts.lowercasedListings[package]?.isDisjoint(with: candidates) == false else { return false }
-            let items = ownedItems(paths, isShared: { _ in false }, root: roots.systemRoot).filter { FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0) }
+                receipts.lowercasedListings[package]?.isDisjoint(with: candidates) == false
+            else { return false }
+            let items = ownedItems(paths, isShared: { _ in false }, root: roots.systemRoot).filter {
+                FileManager.default.fileExists(atPath: $0) || isSymbolicLink($0)
+            }
             return !items.isEmpty && items.allSatisfy(isDeleted)
         }
     }
@@ -120,8 +136,12 @@ enum PackageEvidence {
     /// `pkgutil --file-info` names every package that installed the bundle, Apple's App Store
     /// receipts (Xcode) included.
     static func packagesInstalling(_ path: String, runner: CommandRunner, pkgutil: URL) -> [String] {
-        guard let result = try? runner.run(executable: pkgutil, arguments: ["--file-info", path], environment: ["PATH": "/usr/bin:/bin:/usr/sbin", "LC_ALL": "C"], timeout: 10, outputLimit: 1_048_576),
-              result.status == 0 else { return [] }
+        guard
+            let result = try? runner.run(
+                executable: pkgutil, arguments: ["--file-info", path], environment: ["PATH": "/usr/bin:/bin:/usr/sbin", "LC_ALL": "C"], timeout: 10,
+                outputLimit: 1_048_576),
+            result.status == 0
+        else { return [] }
         var packages: [String] = []
         for line in String(decoding: result.stdout, as: UTF8.self).split(separator: "\n") where line.hasPrefix("pkgid: ") {
             let identifier = line.dropFirst("pkgid: ".count).trimmingCharacters(in: .whitespaces)
@@ -143,23 +163,36 @@ enum PackageEvidence {
     }
 
     /// Folders packages install into but never own. Lowercased.
-    static let standardFolders: Set<String> = Set([
-        "/", "/Applications", "/Applications/Utilities", "/Users", "/Users/Shared", "/opt", "/private", "/private/etc", "/private/var", "/private/tmp", "/etc", "/var", "/tmp",
-        "/usr", "/usr/local", "/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/usr/local/include", "/usr/local/share", "/usr/local/etc", "/usr/local/libexec",
-        "/usr/local/share/man", "/usr/local/share/man/man1", "/usr/local/share/man/man5", "/usr/local/share/man/man8", "/usr/local/share/doc",
-        "/Library", "/Library/Application Support", "/Library/Audio", "/Library/Audio/Plug-Ins", "/Library/Audio/Plug-Ins/Components", "/Library/Audio/Plug-Ins/VST",
-        "/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/HAL", "/Library/Audio/Plug-Ins/CLAP", "/Library/Audio/Plug-Ins/ARA", "/Library/Audio/MIDI Drivers",
-        "/Library/Audio/MIDI Devices", "/Library/Audio/Sounds", "/Library/Audio/Apple Loops", "/Library/Application Support/Avid", "/Library/Application Support/Avid/Audio",
-        "/Library/Application Support/Avid/Audio/Plug-Ins", "/Library/Application Support/Digidesign", "/Library/Application Support/Digidesign/Plug-Ins",
-        "/Library/Automator", "/Library/Bundles", "/Library/Caches", "/Library/ColorPickers", "/Library/ColorSync", "/Library/ColorSync/Profiles", "/Library/Components",
-        "/Library/Contextual Menu Items", "/Library/CoreMediaIO", "/Library/CoreMediaIO/Plug-Ins", "/Library/CoreMediaIO/Plug-Ins/DAL", "/Library/Desktop Pictures",
-        "/Library/Dictionaries", "/Library/DirectoryServices", "/Library/DirectoryServices/PlugIns", "/Library/Documentation", "/Library/DriverExtensions", "/Library/Extensions",
-        "/Library/Filesystems", "/Library/Fonts", "/Library/Frameworks", "/Library/Graphics", "/Library/Image Capture", "/Library/Image Capture/Devices",
-        "/Library/Input Methods", "/Library/Internet Plug-Ins", "/Library/Java", "/Library/Java/Extensions", "/Library/Java/JavaVirtualMachines", "/Library/Keyboard Layouts",
-        "/Library/Keychains", "/Library/LaunchAgents", "/Library/LaunchDaemons", "/Library/Logs", "/Library/Mail", "/Library/Mail/Bundles", "/Library/PDF Services",
-        "/Library/Perl", "/Library/PreferencePanes", "/Library/Preferences", "/Library/Printers", "/Library/PrivilegedHelperTools", "/Library/Python", "/Library/QuickLook",
-        "/Library/Receipts", "/Library/Ruby", "/Library/Screen Savers", "/Library/Scripts", "/Library/Security", "/Library/Services", "/Library/Spotlight",
-        "/Library/StartupItems", "/Library/SystemExtensions", "/Library/User Pictures", "/Library/Video", "/Library/Video/Plug-Ins", "/Library/WebServer", "/Library/Widgets",
-        "/Library/Workflows", "/Library/Workflows/Applications", "/Library/Developer",
-    ].map { $0.lowercased() })
+    static let standardFolders: Set<String> = Set(
+        [
+            "/", "/Applications", "/Applications/Utilities", "/Users", "/Users/Shared", "/opt", "/private", "/private/etc", "/private/var", "/private/tmp",
+            "/etc", "/var", "/tmp",
+            "/usr", "/usr/local", "/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/usr/local/include", "/usr/local/share", "/usr/local/etc",
+            "/usr/local/libexec",
+            "/usr/local/share/man", "/usr/local/share/man/man1", "/usr/local/share/man/man5", "/usr/local/share/man/man8", "/usr/local/share/doc",
+            "/Library", "/Library/Application Support", "/Library/Audio", "/Library/Audio/Plug-Ins", "/Library/Audio/Plug-Ins/Components",
+            "/Library/Audio/Plug-Ins/VST",
+            "/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/HAL", "/Library/Audio/Plug-Ins/CLAP", "/Library/Audio/Plug-Ins/ARA",
+            "/Library/Audio/MIDI Drivers",
+            "/Library/Audio/MIDI Devices", "/Library/Audio/Sounds", "/Library/Audio/Apple Loops", "/Library/Application Support/Avid",
+            "/Library/Application Support/Avid/Audio",
+            "/Library/Application Support/Avid/Audio/Plug-Ins", "/Library/Application Support/Digidesign", "/Library/Application Support/Digidesign/Plug-Ins",
+            "/Library/Automator", "/Library/Bundles", "/Library/Caches", "/Library/ColorPickers", "/Library/ColorSync", "/Library/ColorSync/Profiles",
+            "/Library/Components",
+            "/Library/Contextual Menu Items", "/Library/CoreMediaIO", "/Library/CoreMediaIO/Plug-Ins", "/Library/CoreMediaIO/Plug-Ins/DAL",
+            "/Library/Desktop Pictures",
+            "/Library/Dictionaries", "/Library/DirectoryServices", "/Library/DirectoryServices/PlugIns", "/Library/Documentation", "/Library/DriverExtensions",
+            "/Library/Extensions",
+            "/Library/Filesystems", "/Library/Fonts", "/Library/Frameworks", "/Library/Graphics", "/Library/Image Capture", "/Library/Image Capture/Devices",
+            "/Library/Input Methods", "/Library/Internet Plug-Ins", "/Library/Java", "/Library/Java/Extensions", "/Library/Java/JavaVirtualMachines",
+            "/Library/Keyboard Layouts",
+            "/Library/Keychains", "/Library/LaunchAgents", "/Library/LaunchDaemons", "/Library/Logs", "/Library/Mail", "/Library/Mail/Bundles",
+            "/Library/PDF Services",
+            "/Library/Perl", "/Library/PreferencePanes", "/Library/Preferences", "/Library/Printers", "/Library/PrivilegedHelperTools", "/Library/Python",
+            "/Library/QuickLook",
+            "/Library/Receipts", "/Library/Ruby", "/Library/Screen Savers", "/Library/Scripts", "/Library/Security", "/Library/Services", "/Library/Spotlight",
+            "/Library/StartupItems", "/Library/SystemExtensions", "/Library/User Pictures", "/Library/Video", "/Library/Video/Plug-Ins", "/Library/WebServer",
+            "/Library/Widgets",
+            "/Library/Workflows", "/Library/Workflows/Applications", "/Library/Developer"
+        ].map { $0.lowercased() })
 }

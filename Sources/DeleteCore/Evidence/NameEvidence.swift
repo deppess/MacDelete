@@ -10,7 +10,9 @@ extension EvidenceFinder {
         var candidates = [application.name] + application.alternateNames + [application.executableName].compactMap { $0 }
         for name in candidates {
             let words = name.split(separator: " ")
-            if words.count > 1, let last = words.last, last.count == 1 || last.allSatisfy(\.isNumber) { candidates.append(words.dropLast().joined(separator: " ")) }
+            if words.count > 1, let last = words.last, last.count == 1 || last.allSatisfy(\.isNumber) {
+                candidates.append(words.dropLast().joined(separator: " "))
+            }
         }
         let names = Self.distinct(candidates)
             .filter { $0.count >= 3 && !Self.commonWords.contains($0.lowercased()) && !otherNames.contains($0.lowercased()) }
@@ -28,7 +30,8 @@ extension EvidenceFinder {
             return !version.isEmpty && version.allSatisfy { $0.isNumber || $0 == "." } && lowerNames.contains(String(lowered[..<space]))
         }
         for folder in ["Application Support", "Caches", "Logs", "Caches/SentryCrash"].map({ library.appending(path: $0, directoryHint: .isDirectory) }) {
-            for name in collector.list(folder) where isNamed(name) || (folder.lastPathComponent == "Logs" && name.lowercased().hasSuffix(".log") && isNamed(String(name.dropLast(4)))) {
+            for name in collector.list(folder)
+            where isNamed(name) || (folder.lastPathComponent == "Logs" && name.lowercased().hasSuffix(".log") && isNamed(String(name.dropLast(4)))) {
                 findings.append(Finding(path: folder.appending(path: name).path, tier: .name, reason: "named after the app"))
             }
         }
@@ -37,7 +40,9 @@ extension EvidenceFinder {
             let lowered = name.lowercased()
             if lowered.hasSuffix(".plist") {
                 let base = String(name.dropLast(6))
-                if !base.contains("."), isNamed(base) { findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "named after the app")) }
+                if !base.contains("."), isNamed(base) {
+                    findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "named after the app"))
+                }
             } else if let suffix = [" settings", " prefs", " preferences"].first(where: lowered.hasSuffix), isNamed(String(name.dropLast(suffix.count))) {
                 // Adobe's shape: ~/Library/Preferences/Adobe Photoshop 2026 Settings.
                 findings.append(Finding(path: preferences.appending(path: name).path, tier: .name, reason: "the app's settings"))
@@ -80,7 +85,10 @@ extension EvidenceFinder {
         // The system-wide counterparts, and the folder every user of the Mac shares.
         for folder in ["Application Support", "Caches", "Logs"].map({ roots.library.appending(path: $0, directoryHint: .isDirectory) }) + [roots.sharedUsers] {
             for name in collector.list(folder) where isNamed(name) {
-                findings.append(Finding(path: folder.appending(path: name).path, tier: .name, reason: folder == roots.sharedUsers ? "named after the app, shared by all users" : "named after the app"))
+                findings.append(
+                    Finding(
+                        path: folder.appending(path: name).path, tier: .name,
+                        reason: folder == roots.sharedUsers ? "named after the app, shared by all users" : "named after the app"))
             }
         }
         // Help Viewer's copy of the app's help book, by its title ("CleanShot X Help*2.0").
@@ -94,12 +102,13 @@ extension EvidenceFinder {
         findings += vendorFolderFindings(application, others: others, collector: &collector)
         if let executable = application.executableName?.lowercased(), executable.count >= 3, !otherNames.contains(executable) {
             for reports in [library, roots.library].map({ $0.appending(path: "Logs/DiagnosticReports", directoryHint: .isDirectory) }) {
-            for name in collector.list(reports) {
-                let lowered = name.lowercased()
-                guard lowered.hasPrefix(executable + "-") || lowered.hasPrefix(executable + "_") || lowered.hasPrefix(executable + "."),
-                      [".ips", ".crash", ".diag", ".spin", ".hang"].contains(where: lowered.hasSuffix) else { continue }
-                findings.append(Finding(path: reports.appending(path: name).path, tier: .name, reason: "crash report"))
-            }
+                for name in collector.list(reports) {
+                    let lowered = name.lowercased()
+                    guard lowered.hasPrefix(executable + "-") || lowered.hasPrefix(executable + "_") || lowered.hasPrefix(executable + "."),
+                        [".ips", ".crash", ".diag", ".spin", ".hang"].contains(where: lowered.hasSuffix)
+                    else { continue }
+                    findings.append(Finding(path: reports.appending(path: name).path, tier: .name, reason: "crash report"))
+                }
             }
             let crashReporter = library.appending(path: "Application Support/CrashReporter", directoryHint: .isDirectory)
             for name in collector.list(crashReporter) where name.lowercased().hasPrefix(executable + "_") && name.lowercased().hasSuffix(".plist") {
@@ -118,10 +127,14 @@ extension EvidenceFinder {
     func vendorFolderFindings(_ application: InstalledApp, others: [InstalledApp], collector: inout Collector) -> [Finding] {
         guard let identifier = application.bundleIdentifier?.lowercased() else { return [] }
         let parts = identifier.split(separator: ".").map(String.init)
-        guard parts.count >= 3, ["com", "org", "net", "io", "de", "co", "app", "dev", "me", "ch", "at", "fr", "uk", "jp", "ru", "cn"].contains(parts[0]) else { return [] }
+        guard parts.count >= 3, ["com", "org", "net", "io", "de", "co", "app", "dev", "me", "ch", "at", "fr", "uk", "jp", "ru", "cn"].contains(parts[0]) else {
+            return []
+        }
         let vendor = parts[1]
-        guard vendor.count >= 3, !["apple", "github", "electron", "google.code", "example", "company", "mycompany", "yourcompany", "defaultcompany"].contains(vendor),
-              !Self.commonWords.contains(vendor) else { return [] }
+        guard vendor.count >= 3,
+            !["apple", "github", "electron", "google.code", "example", "company", "mycompany", "yourcompany", "defaultcompany"].contains(vendor),
+            !Self.commonWords.contains(vendor)
+        else { return [] }
         let squeezedVendor = vendor.replacingOccurrences(of: "-", with: "")
 
         // The app's names, and each without words that are the vendor's ("Google Chrome" → "Chrome").
@@ -135,7 +148,9 @@ extension EvidenceFinder {
                 return Array(list.dropLast())
             }
             for candidate in [words, kept] + unversioned where !candidate.isEmpty {
-                for joined in [candidate.joined(separator: " "), candidate.joined(separator: "-"), candidate.joined()] where joined.count >= 3 { products.insert(joined.lowercased()) }
+                for joined in [candidate.joined(separator: " "), candidate.joined(separator: "-"), candidate.joined()] where joined.count >= 3 {
+                    products.insert(joined.lowercased())
+                }
             }
         }
         // A product another installed app is named after belongs to that app, not this one.
@@ -169,8 +184,12 @@ extension EvidenceFinder {
     }
 
     /// Generic words that are no evidence on their own (from Mole's list of common launch-agent words).
-    static let commonWords: Set<String> = ["music", "notes", "photos", "finder", "safari", "preview", "calendar", "contacts", "messages", "reminders", "clock", "weather",
-        "stocks", "books", "news", "podcasts", "voice", "files", "store", "system", "helper", "agent", "daemon", "service", "update", "updater", "sync", "backup", "cloud",
-        "manager", "monitor", "server", "client", "worker", "runner", "launcher", "driver", "plugin", "extension", "widget", "utility", "app", "application", "electron",
-        "chrome", "chromium", "java", "python", "node", "setup", "installer", "uninstaller", "main", "default", "data", "cache", "caches", "logs", "temp", "tmp"]
+    static let commonWords: Set<String> = [
+        "music", "notes", "photos", "finder", "safari", "preview", "calendar", "contacts", "messages", "reminders", "clock", "weather",
+        "stocks", "books", "news", "podcasts", "voice", "files", "store", "system", "helper", "agent", "daemon", "service", "update", "updater", "sync",
+        "backup", "cloud",
+        "manager", "monitor", "server", "client", "worker", "runner", "launcher", "driver", "plugin", "extension", "widget", "utility", "app", "application",
+        "electron",
+        "chrome", "chromium", "java", "python", "node", "setup", "installer", "uninstaller", "main", "default", "data", "cache", "caches", "logs", "temp", "tmp"
+    ]
 }

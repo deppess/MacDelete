@@ -14,8 +14,11 @@ enum AppSpecific {
             // Regenerable build and device data. Archives, provisioning profiles, user data and
             // simulator devices are the user's and stay.
             let developer = home.appending(path: "Library/Developer", directoryHint: .isDirectory)
-            let items = ["Xcode/DerivedData", "Xcode/iOS DeviceSupport", "Xcode/macOS DeviceSupport", "Xcode/watchOS DeviceSupport", "Xcode/tvOS DeviceSupport",
-                         "Xcode/xrOS DeviceSupport", "Xcode/visionOS DeviceSupport", "CoreSimulator/Caches"].map { developer.appending(path: $0).path } + [home.appending(path: ".Xcode").path]
+            let items =
+                [
+                    "Xcode/DerivedData", "Xcode/iOS DeviceSupport", "Xcode/macOS DeviceSupport", "Xcode/watchOS DeviceSupport", "Xcode/tvOS DeviceSupport",
+                    "Xcode/xrOS DeviceSupport", "Xcode/visionOS DeviceSupport", "CoreSimulator/Caches"
+                ].map { developer.appending(path: $0).path } + [home.appending(path: ".Xcode").path]
             for path in items where FileManager.default.fileExists(atPath: path) {
                 if otherIdentifiers.contains("com.apple.dt.xcode") {
                     skipped.append(Skipped(path: path, reason: "another Xcode is still installed"))
