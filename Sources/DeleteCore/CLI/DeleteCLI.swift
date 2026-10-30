@@ -27,11 +27,11 @@ public enum DeleteCLI {
         do {
             invocation = try Invocation(arguments: arguments)
         } catch {
-            printError("\(error.localizedDescription)\nRun \"delete --help\" for usage.")
+            TerminalInteraction.printError("\(error.localizedDescription)\nRun \"delete --help\" for usage.")
             return 2
         }
         let timing = environment["DELETE_TIMING"] == "1" ? Timing() : nil
-        defer { if let timing { printError(timing.report) } }
+        defer { if let timing { TerminalInteraction.printError(timing.report) } }
 
         switch invocation.command {
         case .help:
@@ -57,10 +57,10 @@ public enum DeleteCLI {
             do {
                 print(invocation.json ? try ListRenderer.json(shown, warnings: inventory.warnings) : ListRenderer.text(shown, home: roots.home))
             } catch {
-                printError("Unable to encode the list: \(error.localizedDescription)")
+                TerminalInteraction.printError("Unable to encode the list: \(error.localizedDescription)")
                 return EXIT_FAILURE
             }
-            if !invocation.json { inventory.warnings.forEach { printError("warning: \($0.terminalInline)") } }
+            if !invocation.json { inventory.warnings.forEach { TerminalInteraction.printError("warning: \($0.terminalInline)") } }
             timing?.mark("render")
             return inventory.complete ? EXIT_SUCCESS : EXIT_FAILURE
         case let .remove(query):
@@ -72,15 +72,15 @@ public enum DeleteCLI {
             let allowPrefix = invocation.dryRun || !invocation.assumeYes
             switch AppMatcher.match(query, in: inventory.applications, home: roots.home, allowPrefix: allowPrefix) {
             case let .prefixOnly(application):
-                printError("\"\(query.terminalInline)\" only matches the start of \(application.name.terminalInline)'s name. With -y, give its full name, bundle identifier or path.")
+                TerminalInteraction.printError("\"\(query.terminalInline)\" only matches the start of \(application.name.terminalInline)'s name. With -y, give its full name, bundle identifier or path.")
                 return EXIT_FAILURE
             case .notFound:
-                printError("No app matches \"\(query.terminalInline)\". Run \"delete list\" to see installed apps.")
+                TerminalInteraction.printError("No app matches \"\(query.terminalInline)\". Run \"delete list\" to see installed apps.")
                 return EXIT_FAILURE
             case let .ambiguous(candidates):
-                printError("\"\(query.terminalInline)\" matches several apps:")
-                for candidate in candidates { printError("  \(candidate.name.terminalInline)   \(Format.path(candidate.path, home: roots.home).terminalInline)") }
-                printError("Give the full name, the bundle identifier, or the path.")
+                TerminalInteraction.printError("\"\(query.terminalInline)\" matches several apps:")
+                for candidate in candidates { TerminalInteraction.printError("  \(candidate.name.terminalInline)   \(Format.path(candidate.path, home: roots.home).terminalInline)") }
+                TerminalInteraction.printError("Give the full name, the bundle identifier, or the path.")
                 return EXIT_FAILURE
             case var .found(application):
                 application.source = Inventory.source(of: application, casks: inventory.casks, receipts: inventory.receipts)
@@ -97,14 +97,14 @@ public enum DeleteCLI {
         var sandbox: Sandbox?
         if let path = environment["DELETE_SANDBOX"]?.nonEmpty {
             guard let valid = Sandbox(path: path) else {
-                printError("DELETE_SANDBOX must be an existing folder at least two levels deep: \(path.terminalInline)")
+                TerminalInteraction.printError("DELETE_SANDBOX must be an existing folder at least two levels deep: \(path.terminalInline)")
                 return 2
             }
             sandbox = valid
         }
         let isRoot = geteuid() == 0 && sandbox == nil
         if invocation.approved != nil, !isRoot {
-            printError("--approved is only for delete's own rerun under sudo.")
+            TerminalInteraction.printError("--approved is only for delete's own rerun under sudo.")
             return 2
         }
 
@@ -120,7 +120,7 @@ public enum DeleteCLI {
             planGroup = try planBuilder.build(for: application)
             plans = planGroup.plans
         } catch {
-            printError(error.message)
+            TerminalInteraction.printError(error.message)
             return EXIT_FAILURE
         }
         let reasons = planGroup.reasonsByApplicationPath
@@ -131,13 +131,13 @@ public enum DeleteCLI {
             }
         }
         func render(_ plans: [RemovalPlan], asRoot: Bool) -> String {
-            PlanRenderer.text(plans, reasons: reasons, isRoot: asRoot, home: roots.home, width: terminalWidth)
+            PlanRenderer.text(plans, reasons: reasons, isRoot: asRoot, home: roots.home, width: TerminalInteraction.width)
         }
 
         if invocation.dryRun {
             if invocation.json {
                 do { print(try PlanRenderer.json(plans[0], companions: plans.dropFirst().map { ($0, reasons[$0.application.path] ?? "") })) } catch {
-                    printError("Unable to encode the plan: \(error.localizedDescription)")
+                    TerminalInteraction.printError("Unable to encode the plan: \(error.localizedDescription)")
                     return EXIT_FAILURE
                 }
                 return EXIT_SUCCESS
@@ -152,14 +152,14 @@ public enum DeleteCLI {
         // A dry run may still show the best available evidence, but a destructive run must never
         // infer that another app or package is absent because one of those indexes could not load.
         if !inventory.complete, sandbox == nil {
-            printError("Can't safely delete while discovery is incomplete. Nothing was deleted.\n" + inventory.warnings.map { "  \($0)" }.joined(separator: "\n"))
+            TerminalInteraction.printError("Can't safely delete while discovery is incomplete. Nothing was deleted.\n" + inventory.warnings.map { "  \($0)" }.joined(separator: "\n"))
             return EXIT_FAILURE
         }
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
         if let blocked = plans.first(where: { !$0.activeSystemExtensions.isEmpty }), sandbox == nil {
             print(render(plans, asRoot: isRoot || elevates(plans)))
-            printError("\nTurn off \(blocked.application.name.terminalInline)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
+            TerminalInteraction.printError("\nTurn off \(blocked.application.name.terminalInline)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
             return EXIT_FAILURE
         }
 
@@ -176,18 +176,18 @@ public enum DeleteCLI {
             } else {
                 preconditionFailure("A non-empty running plan must have a name.")
             }
-            guard invocation.assumeYes || invocation.approved != nil || ask(question) else {
+            guard invocation.assumeYes || invocation.approved != nil || TerminalInteraction.ask(question) else {
                 print("Nothing was deleted.")
                 return EXIT_FAILURE
             }
             for plan in running {
                 if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
-                    printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
+                    TerminalInteraction.printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
                     return EXIT_FAILURE
                 }
             }
             do { plans = try planBuilder.build(for: application).plans } catch {
-                printError(error.message)
+                TerminalInteraction.printError(error.message)
                 return EXIT_FAILURE
             }
             if sandbox != nil { for index in plans.indices { plans[index].running = false } }
@@ -204,7 +204,7 @@ public enum DeleteCLI {
                 sandbox: sandbox,
                 home: roots.home)
         } catch {
-            printError(error.message(home: roots.home))
+            TerminalInteraction.printError(error.message(home: roots.home))
             return EXIT_FAILURE
         }
         let fingerprint = prepared.fingerprint
@@ -216,16 +216,16 @@ public enum DeleteCLI {
         if !confirmed { print(render(plans, asRoot: asRoot)) }
         guard let question = PlanRenderer.question(plans, isRoot: asRoot) else {
             if plans[0].appNeedsRoot(isRoot: asRoot) || plans.contains(where: { !$0.split(isRoot: asRoot).needingRoot.isEmpty }) {
-                printError("\nEverything here needs administrator rights, which a sandbox run doesn't have, so nothing was deleted.")
+                TerminalInteraction.printError("\nEverything here needs administrator rights, which a sandbox run doesn't have, so nothing was deleted.")
             } else {
-                printError("\nNothing is selected to delete.")
+                TerminalInteraction.printError("\nNothing is selected to delete.")
             }
             return EXIT_FAILURE
         }
         if !confirmed {
             if elevate { print("\nSome of this needs administrator rights: macOS will ask for your password.") }
             print("")
-            guard invocation.assumeYes || ask(question) else {
+            guard invocation.assumeYes || TerminalInteraction.ask(question) else {
                 print("Nothing was deleted.")
                 return EXIT_FAILURE
             }
@@ -235,7 +235,7 @@ public enum DeleteCLI {
                 application: application,
                 fingerprint: fingerprint,
                 includesCompanions: invocation.withCompanions,
-                reportError: printError)
+                reportError: TerminalInteraction.printError)
         }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
@@ -253,34 +253,4 @@ public enum DeleteCLI {
         return report.failed.isEmpty && report.actionFailures.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
     }
 
-    /// Standard output's width in columns when it's a terminal, nil otherwise.
-    static var terminalWidth: Int? {
-        guard isatty(STDOUT_FILENO) == 1 else { return nil }
-        var size = winsize()
-        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else { return nil }
-        return Int(size.ws_col)
-    }
-
-    /// Asks a yes/no question on the terminal. Only "y" or "yes" is yes; no terminal, an empty
-    /// answer or a failed read is no.
-    static func ask(_ question: String) -> Bool {
-        guard let terminal = fopen("/dev/tty", "r+") else {
-            printError("\(question.trimmingCharacters(in: .whitespaces))\nNo terminal to answer on; rerun in a terminal, or with -y.")
-            return false
-        }
-        defer { fclose(terminal) }
-        fputs(question, terminal)
-        fflush(terminal)
-        var buffer = [CChar](repeating: 0, count: 64)
-        guard fgets(&buffer, Int32(buffer.count), terminal) != nil else { return false }
-        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-        let answer = String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return answer == "y" || answer == "yes"
-    }
-
-    static func printError(_ message: String) {
-        // Standard output is buffered and standard error isn't; flush so the two stay in order.
-        fflush(stdout)
-        FileHandle.standardError.write(Data((message + "\n").utf8))
-    }
 }
