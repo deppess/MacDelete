@@ -44,7 +44,9 @@ public struct Inventory: Sendable {
             timing?.mark("sizes (\(missing.count) walked)")
         }
         let warnings = scan.warnings + caskScan.warnings + receiptScan.warnings
-        return Inventory(applications: applications, casks: casks, receipts: receipts, warnings: warnings, complete: scan.complete && caskScan.complete && receiptScan.complete)
+        return Inventory(
+            applications: applications, casks: casks, receipts: receipts, warnings: warnings,
+            complete: scan.complete && caskScan.complete && receiptScan.complete)
     }
 
     /// Sizes of the bundles directly in roots that allow extensionless bundles, by lowercased path.
@@ -80,7 +82,8 @@ public struct Inventory: Sendable {
         for cask in casks {
             if cask.appPaths.contains(where: { $0.lowercased() == path })
                 || cask.suitePaths.contains(where: { path.hasPrefix($0.lowercased() + "/") })
-                || packages.contains(where: { identifier in cask.packagePatterns.contains { Caskroom.package(identifier, matches: $0) } }) {
+                || packages.contains(where: { identifier in cask.packagePatterns.contains { Caskroom.package(identifier, matches: $0) } })
+            {
                 return .homebrew(token: cask.token, declared: true)
             }
         }

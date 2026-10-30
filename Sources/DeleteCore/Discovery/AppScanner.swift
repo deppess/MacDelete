@@ -71,18 +71,20 @@ public struct AppScanner: Sendable {
                 }
                 continue
             }
-            guard let enumerator = FileManager.default.enumerator(
-                at: normalizedRoot,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                // Not .skipsHiddenFiles: that also skips entries carrying the BSD hidden flag, which
-                // macOS sets on /Applications/Safari.app. Dot-files are skipped by name below.
-                options: [],
-                errorHandler: { url, error in
-                    warnings.append("Unable to read \(url.path): \(error.localizedDescription)")
-                    complete = false
-                    return true
-                }
-            ) else {
+            guard
+                let enumerator = FileManager.default.enumerator(
+                    at: normalizedRoot,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    // Not .skipsHiddenFiles: that also skips entries carrying the BSD hidden flag, which
+                    // macOS sets on /Applications/Safari.app. Dot-files are skipped by name below.
+                    options: [],
+                    errorHandler: { url, error in
+                        warnings.append("Unable to read \(url.path): \(error.localizedDescription)")
+                        complete = false
+                        return true
+                    }
+                )
+            else {
                 warnings.append("Unable to read \(normalizedRoot.path).")
                 complete = false
                 continue
@@ -92,7 +94,8 @@ public struct AppScanner: Sendable {
                 if let maxDepth = root.maxDepth, enumerator.level > maxDepth + 1 { enumerator.skipDescendants(); continue }
                 // Symlinked directories are never descended into; only a symlink that is itself an
                 // application bundle (macOS ships /Applications/Safari.app this way) is followed.
-                let isFolderBundle = root.extensionlessBundles && enumerator.level == 1 && candidate.pathExtension.lowercased() != "app"
+                let isFolderBundle =
+                    root.extensionlessBundles && enumerator.level == 1 && candidate.pathExtension.lowercased() != "app"
                     && FileManager.default.fileExists(atPath: candidate.appending(path: "Contents/Info.plist").path)
                 guard candidate.pathExtension.lowercased() == "app" || isFolderBundle else {
                     // Nothing inside another bundle is an installed app (CoreServices' plug-in
@@ -104,8 +107,9 @@ public struct AppScanner: Sendable {
                 let isSymbolicLink = (try? candidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                 let normalized = candidate.standardizedFileURL
                 guard isContained(normalized, in: normalizedRoot), isPlausibleApplicationBundle(normalized),
-                      let bundle = resolvedBundle(normalized, isSymbolicLink: isSymbolicLink),
-                      seenIdentities.insert(fileIdentity(bundle) ?? BundleIdentity(path: bundle.path)).inserted else { continue }
+                    let bundle = resolvedBundle(normalized, isSymbolicLink: isSymbolicLink),
+                    seenIdentities.insert(fileIdentity(bundle) ?? BundleIdentity(path: bundle.path)).inserted
+                else { continue }
                 // A linked bundle takes its classification from where it really lives, so Safari's
                 // Cryptex link in /Applications is still part of macOS.
                 let classification = isSymbolicLink ? classify(bundle) : root.classification
@@ -129,9 +133,13 @@ public struct AppScanner: Sendable {
                     let isSymbolicLink = (try? rawCandidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                     // Directory components are resolved, but a candidate that is itself a link keeps
                     // its own name, matching the walk.
-                    let candidate = isSymbolicLink ? rawCandidate.deletingLastPathComponent().resolvingSymlinksInPath().appending(path: rawCandidate.lastPathComponent) : rawCandidate.resolvingSymlinksInPath()
+                    let candidate =
+                        isSymbolicLink
+                        ? rawCandidate.deletingLastPathComponent().resolvingSymlinksInPath().appending(path: rawCandidate.lastPathComponent)
+                        : rawCandidate.resolvingSymlinksInPath()
                     guard candidate.pathExtension.lowercased() == "app", isPlausibleApplicationBundle(candidate),
-                          let bundle = scanner.resolvedBundle(candidate, isSymbolicLink: isSymbolicLink) else {
+                        let bundle = scanner.resolvedBundle(candidate, isSymbolicLink: isSymbolicLink)
+                    else {
                         checked[index] = (candidate, nil, nil, .user)
                         return
                     }
@@ -140,8 +148,9 @@ public struct AppScanner: Sendable {
                 for (record, check) in zip(records, checked.values) {
                     if let size = record.size { spotlightSizes[check.candidate.path] = size }
                     guard let bundle = check.bundle,
-                          seenIdentities.insert(check.identity ?? BundleIdentity(path: bundle.path)).inserted,
-                          seenCandidates.insert(check.candidate.path).inserted else { continue }
+                        seenIdentities.insert(check.identity ?? BundleIdentity(path: bundle.path)).inserted,
+                        seenCandidates.insert(check.candidate.path).inserted
+                    else { continue }
                     candidates.append((check.candidate, bundle, check.classification))
                 }
             } catch {
@@ -182,18 +191,24 @@ public struct AppScanner: Sendable {
         let values = try bundle.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { return nil }
         let isIOS = isIOSWrapper(bundle)
-        let plistURL = isIOS ? bundle.appending(path: "WrappedBundle").resolvingSymlinksInPath().appending(path: "Info.plist") : bundle.appending(path: "Contents/Info.plist")
+        let plistURL =
+            isIOS
+            ? bundle.appending(path: "WrappedBundle").resolvingSymlinksInPath().appending(path: "Info.plist") : bundle.appending(path: "Contents/Info.plist")
         let plistValues = try plistURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard plistValues.isRegularFile == true, plistValues.isSymbolicLink != true else { throw ScanError.invalidMetadata }
         guard (plistValues.fileSize ?? 0) <= 1_048_576 else { throw ScanError.metadataTooLarge }
         let data = try Data(contentsOf: plistURL, options: [.mappedIfSafe])
-        guard let metadata = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else { throw ScanError.invalidMetadata }
+        guard let metadata = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            throw ScanError.invalidMetadata
+        }
 
         // Only ".app" is an extension here: a game folder named "Foo 1.5" keeps its whole name.
         let name = url.pathExtension.lowercased() == "app" ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent
         var alternateNames: [String] = []
         for key in ["CFBundleDisplayName", "CFBundleName"] {
-            if let value = visibleName(metadata[key]), value.caseInsensitiveCompare(name) != .orderedSame, !alternateNames.contains(value) { alternateNames.append(value) }
+            if let value = visibleName(metadata[key]), value.caseInsensitiveCompare(name) != .orderedSame, !alternateNames.contains(value) {
+                alternateNames.append(value)
+            }
         }
         let bundleIdentifier = (metadata["CFBundleIdentifier"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
         let executable = (metadata["CFBundleExecutable"] as? String)?.nonEmpty.flatMap { $0.contains("/") ? nil : $0 }
@@ -203,7 +218,9 @@ public struct AppScanner: Sendable {
         if bundle.path != url.path { linkTargets.append(bundle.path) }
         if let executable, !isIOS {
             let executableURL = bundle.appending(path: "Contents/MacOS").appending(path: executable)
-            if (try? executableURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { linkTargets.append(executableURL.resolvingSymlinksInPath().path) }
+            if (try? executableURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+                linkTargets.append(executableURL.resolvingSymlinksInPath().path)
+            }
         }
         let hasReceipt = FileManager.default.fileExists(atPath: bundle.appending(path: "Contents/_MASReceipt/receipt").path)
         return InstalledApp(
@@ -220,7 +237,10 @@ public struct AppScanner: Sendable {
     /// invisible characters such as U+200E; those don't count as a name.
     private static func visibleName(_ value: Any?) -> String? {
         guard let name = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        let isVisible = name.unicodeScalars.contains { !$0.properties.isWhitespace && !$0.properties.isDefaultIgnorableCodePoint && $0.properties.generalCategory != .format && $0.properties.generalCategory != .control }
+        let isVisible = name.unicodeScalars.contains {
+            !$0.properties.isWhitespace && !$0.properties.isDefaultIgnorableCodePoint && $0.properties.generalCategory != .format
+                && $0.properties.generalCategory != .control
+        }
         return isVisible ? name : nil
     }
 
@@ -239,15 +259,20 @@ public struct AppScanner: Sendable {
         guard isSymbolicLink else { return url }
         let destination = url.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
-        guard destination.pathExtension.lowercased() == "app", FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue,
-              isPlausibleApplicationBundle(destination) else { return nil }
+        guard destination.pathExtension.lowercased() == "app", FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory),
+            isDirectory.boolValue,
+            isPlausibleApplicationBundle(destination)
+        else { return nil }
         return destination
     }
 
     /// Every application bundle Spotlight knows, with its allocated size when indexed. Output
     /// records are `<path>   kMDItemPhysicalSize = <bytes or (null)>`, NUL-separated.
     private func spotlightApplications() throws -> [(path: String, size: Int64?)] {
-        let result = try runner.run(executable: URL(filePath: "/usr/bin/mdfind"), arguments: ["-0", "-onlyin", "/", "kMDItemContentType == \"com.apple.application-bundle\"c", "-attr", "kMDItemPhysicalSize"], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 32 * 1_024 * 1_024)
+        let result = try runner.run(
+            executable: URL(filePath: "/usr/bin/mdfind"),
+            arguments: ["-0", "-onlyin", "/", "kMDItemContentType == \"com.apple.application-bundle\"c", "-attr", "kMDItemPhysicalSize"],
+            environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 32 * 1_024 * 1_024)
         guard result.status == 0 else { throw ScanError.spotlightFailed }
         let separator = "   kMDItemPhysicalSize = "
         return result.stdout.split(separator: 0, omittingEmptySubsequences: true).compactMap { record in

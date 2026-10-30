@@ -41,8 +41,12 @@ public struct PackageReceipts: Sendable {
         self.filesByIdentifier = filesByIdentifier
     }
 
-    private init(packagesByApplication: [String: [String]], listings: [String: [String]], lowercasedListings: [String: Set<String>], filesByIdentifier: [String: Files]) {
-        (self.packagesByApplication, self.listings, self.lowercasedListings, self.filesByIdentifier) = (packagesByApplication, listings, lowercasedListings, filesByIdentifier)
+    private init(
+        packagesByApplication: [String: [String]], listings: [String: [String]], lowercasedListings: [String: Set<String>], filesByIdentifier: [String: Files]
+    ) {
+        (self.packagesByApplication, self.listings, self.lowercasedListings, self.filesByIdentifier) = (
+            packagesByApplication, listings, lowercasedListings, filesByIdentifier
+        )
     }
 
     /// Whether any package but these lists the (lowercased) path.
@@ -88,11 +92,13 @@ public struct PackageReceipts: Sendable {
         // it, there is no unambiguous plist/BOM pair to bind into the approval, so refuse real
         // deletion by making the inventory incomplete instead of letting dictionary assignment
         // choose one arbitrarily.
-        let duplicateIdentifiers = Set(discovered.map { $0.identifier.lowercased() }.filter { identifier in
-            discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.count > 1
-        })
+        let duplicateIdentifiers = Set(
+            discovered.map { $0.identifier.lowercased() }.filter { identifier in
+                discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.count > 1
+            })
         for identifier in duplicateIdentifiers.sorted() {
-            let files = discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.map { $0.plist.path }.sorted().joined(separator: ", ")
+            let files = discovered.filter { $0.identifier.caseInsensitiveCompare(identifier) == .orderedSame }.map { $0.plist.path }.sorted().joined(
+                separator: ", ")
             warnings.append("Installer receipt identifier \(identifier) appears in multiple files: \(files)")
         }
         let receipts = discovered.filter { !duplicateIdentifiers.contains($0.identifier.lowercased()) }
@@ -117,7 +123,9 @@ public struct PackageReceipts: Sendable {
                 map[path.lowercased(), default: []].append(receipt.identifier)
             }
         }
-        return Scan(receipts: PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased, filesByIdentifier: files), warnings: warnings)
+        return Scan(
+            receipts: PackageReceipts(packagesByApplication: map, listings: listings, lowercasedListings: lowercased, filesByIdentifier: files),
+            warnings: warnings)
     }
 
     /// The absolute paths a BOM lists, or none when it can't be read.
@@ -125,9 +133,13 @@ public struct PackageReceipts: Sendable {
         (try? listingResult(bom: bom, installPrefix: installPrefix, runner: runner, lsbom: lsbom, excludingInside: excluded).get()) ?? []
     }
 
-    private static func listingResult(bom: URL, installPrefix: String, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> Result<[String], ListingError> {
+    private static func listingResult(bom: URL, installPrefix: String, runner: CommandRunner, lsbom: URL, excludingInside excluded: String? = nil) -> Result<
+        [String], ListingError
+    > {
         do {
-            let result = try runner.run(executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 256 * 1_024 * 1_024)
+            let result = try runner.run(
+                executable: lsbom, arguments: ["-s", bom.path], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30,
+                outputLimit: 256 * 1_024 * 1_024)
             guard result.status == 0 else { return .failure(ListingError(message: "lsbom exited \(result.status)")) }
             return .success(paths(bomOutput: result.stdout, installPrefix: installPrefix, excludingInside: excluded))
         } catch {
@@ -185,7 +197,9 @@ public struct PackageReceipts: Sendable {
         var componentStart = path.startIndex
         for index in path.startIndex...path.endIndex where index == path.endIndex || path[index] == 0x2F {
             let length = index - componentStart
-            if (length == 1 && path[componentStart] == 0x2E) || (length == 2 && path[componentStart] == 0x2E && path[componentStart + 1] == 0x2E) { return true }
+            if (length == 1 && path[componentStart] == 0x2E) || (length == 2 && path[componentStart] == 0x2E && path[componentStart + 1] == 0x2E) {
+                return true
+            }
             componentStart = index + 1
         }
         return false

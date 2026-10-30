@@ -50,10 +50,14 @@ public enum AppMatcher {
     /// a bundle the scan didn't list, read directly.
     private static func matchPath(_ query: String, in applications: [InstalledApp], home: URL) -> MatchResult {
         let expanded = query == "~" ? home.path : query.hasPrefix("~/") ? home.appending(path: String(query.dropFirst(2))).path : query
-        let absolute = expanded.hasPrefix("/") ? URL(filePath: expanded) : URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory).appending(path: expanded)
+        let absolute =
+            expanded.hasPrefix("/")
+            ? URL(filePath: expanded) : URL(filePath: FileManager.default.currentDirectoryPath, directoryHint: .isDirectory).appending(path: expanded)
         let url = absolute.standardizedFileURL
         let resolved = url.resolvingSymlinksInPath().path
-        if let application = applications.first(where: { $0.path == url.path || $0.bundlePath == resolved || $0.path == resolved }) { return .found(application) }
+        if let application = applications.first(where: { $0.path == url.path || $0.bundlePath == resolved || $0.path == resolved }) {
+            return .found(application)
+        }
         let target = identity(url.path)
         if let target, let application = applications.first(where: { identity($0.bundlePath) == target }) { return .found(application) }
         guard url.pathExtension.lowercased() == "app", isPlausibleApplicationBundle(url) else { return .notFound }

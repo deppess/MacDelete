@@ -122,13 +122,16 @@ public enum Caskroom {
                                     unsupported.insert("uninstall \(directiveKey)")
                                     continue
                                 }
-                                if directiveKey == "delete" { uninstallDeletePaths += paths }
-                                else { uninstallEmptyFolders += paths }
+                                if directiveKey == "delete" { uninstallDeletePaths += paths } else { uninstallEmptyFolders += paths }
                             case "pkgutil":
                                 let patterns: [String]
-                                if let single = directiveValue as? String { patterns = [single] }
-                                else if let list = directiveValue as? [String] { patterns = list }
-                                else { unsupported.insert("uninstall pkgutil"); continue }
+                                if let single = directiveValue as? String {
+                                    patterns = [single]
+                                } else if let list = directiveValue as? [String] {
+                                    patterns = list
+                                } else {
+                                    unsupported.insert("uninstall pkgutil"); continue
+                                }
                                 guard patterns.allSatisfy(safePackagePattern) else {
                                     unsupported.insert("uninstall pkgutil")
                                     continue
@@ -163,17 +166,20 @@ public enum Caskroom {
                     let name = URL(filePath: target ?? source).lastPathComponent
                     guard !name.isEmpty, name != ".", name != ".." else { unsupported.insert(key); continue }
                     removalArtifactPaths.append(prefix.appending(path: "bin/\(name)").path)
-                case "zap": continue // delete models zap paths itself.
+                case "zap": continue  // delete models zap paths itself.
                 default: unsupported.insert(key)
                 }
             }
         }
         let version = (receipt["source"] as? [String: Any])?["version"] as? String
-        return (InstalledCask(token: token, prefix: prefix.path, version: version, appPaths: appPaths, suitePaths: suitePaths, packagePatterns: packagePatterns,
-                              removalArtifactPaths: Array(Set(removalArtifactPaths)).sorted(), uninstallDeletePaths: Array(Set(uninstallDeletePaths)).sorted(),
-                              uninstallEmptyFolders: Array(Set(uninstallEmptyFolders)).sorted(), launchctlLabels: Array(Set(launchctlLabels)).sorted(),
-                              quitIdentifiers: Array(Set(quitIdentifiers)).sorted(),
-                              unsupportedUninstallArtifacts: unsupported.sorted()), nil)
+        return (
+            InstalledCask(
+                token: token, prefix: prefix.path, version: version, appPaths: appPaths, suitePaths: suitePaths, packagePatterns: packagePatterns,
+                removalArtifactPaths: Array(Set(removalArtifactPaths)).sorted(), uninstallDeletePaths: Array(Set(uninstallDeletePaths)).sorted(),
+                uninstallEmptyFolders: Array(Set(uninstallEmptyFolders)).sorted(), launchctlLabels: Array(Set(launchctlLabels)).sorted(),
+                quitIdentifiers: Array(Set(quitIdentifiers)).sorted(),
+                unsupportedUninstallArtifacts: unsupported.sorted()), nil
+        )
     }
 
     /// Whether a package identifier matches one of delete's deliberately narrow `pkgutil:` forms:
@@ -195,14 +201,13 @@ public enum Caskroom {
     /// locations.  This avoids importing Homebrew's shell/glob semantics into a deletion tool.
     private static func exactPaths(_ value: Any, home: URL) -> [String]? {
         let values: [String]
-        if let single = value as? String { values = [single] }
-        else if let list = value as? [String] { values = list }
-        else { return nil }
+        if let single = value as? String { values = [single] } else if let list = value as? [String] { values = list } else { return nil }
         var paths: [String] = []
         for value in values {
             guard (value.hasPrefix("/") || value.hasPrefix("~/")),
-                  !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == "." || $0 == ".." }),
-                  !value.contains(where: { "*?[]{}$`\\".contains($0) }) else { return nil }
+                !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == "." || $0 == ".." }),
+                !value.contains(where: { "*?[]{}$`\\".contains($0) })
+            else { return nil }
             let path = expand(value, home: home, relativeTo: "/")
             guard path != "/" else { return nil }
             paths.append(path)
@@ -212,9 +217,7 @@ public enum Caskroom {
 
     private static func launchLabels(_ value: Any) -> [String]? {
         let labels: [String]
-        if let single = value as? String { labels = [single] }
-        else if let list = value as? [String] { labels = list }
-        else { return nil }
+        if let single = value as? String { labels = [single] } else if let list = value as? [String] { labels = list } else { return nil }
         guard labels.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || "._-".contains($0) } }) else { return nil }
         return labels
     }
@@ -225,7 +228,9 @@ public enum Caskroom {
     private static func safePackagePattern(_ pattern: String) -> Bool {
         guard !pattern.isEmpty, pattern.allSatisfy({ $0.isLetter || $0.isNumber || "._-*".contains($0) }) else { return false }
         guard pattern.contains("*") else { return true }
-        guard pattern.hasSuffix(".*"), pattern.dropLast(2).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_" }) else { return false }
+        guard pattern.hasSuffix(".*"), pattern.dropLast(2).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_" }) else {
+            return false
+        }
         return pattern.dropLast(2).split(separator: ".", omittingEmptySubsequences: true).count >= 3
     }
 
