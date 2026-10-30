@@ -230,7 +230,13 @@ public enum DeleteCLI {
                 return EXIT_FAILURE
             }
         }
-        if elevate { return rerunWithSudo(application, fingerprint: fingerprint, invocation: invocation) }
+        if elevate {
+            return PrivilegeEscalation.rerun(
+                application: application,
+                fingerprint: fingerprint,
+                includesCompanions: invocation.withCompanions,
+                reportError: printError)
+        }
 
         let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
         let report = executor.run(group: plans, targets: prepared.findingTargets, emptyTargets: prepared.emptyFolderTargets, launchTargets: prepared.launchTargets, receiptTargets: prepared.receiptTargets, isRoot: isRoot, casks: inventory.casks)
@@ -245,26 +251,6 @@ public enum DeleteCLI {
             recording.recorded.forEach { print("  \($0)") }
         }
         return report.failed.isEmpty && report.actionFailures.isEmpty && report.stopped == nil ? EXIT_SUCCESS : EXIT_FAILURE
-    }
-
-    /// Replaces this process with `sudo delete --approved <fingerprint> <app path>`: sudo asks
-    /// for the password on the terminal, and the rerun deletes what was confirmed (or shows the
-    /// plan again and asks, if running as root found more). Returns only if that can't start.
-    static func rerunWithSudo(_ application: InstalledApp, fingerprint: String, invocation: Invocation) -> Int32 {
-        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath().path else {
-            printError("Couldn't find delete's own path to rerun it with sudo. Run: sudo delete \(Format.shellQuoted(application.path))")
-            return EXIT_FAILURE
-        }
-        var arguments = ["/usr/bin/sudo", "--", executable, "--approved", fingerprint]
-        if !invocation.withCompanions { arguments.append("--no-companions") }
-        arguments += ["--", application.path]
-        fflush(stdout)
-        var pointers = arguments.map { strdup($0) } + [nil]
-        execv("/usr/bin/sudo", &pointers)
-        let error = String(cString: strerror(errno))
-        pointers.forEach { free($0) }
-        printError("Couldn't run sudo (\(error)). Run: sudo delete \(Format.shellQuoted(application.path))")
-        return EXIT_FAILURE
     }
 
     /// Standard output's width in columns when it's a terminal, nil otherwise.
