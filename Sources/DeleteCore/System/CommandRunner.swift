@@ -146,12 +146,14 @@ public struct CommandRunner: Sendable {
     private static func spawn(executable: URL, arguments: [String], environment: [String: String], stdout: Pipe, stderr: Pipe) throws -> pid_t {
         var actions: posix_spawn_file_actions_t?
         var attributes: posix_spawnattr_t?
-        guard posix_spawn_file_actions_init(&actions) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        let actionsResult = posix_spawn_file_actions_init(&actions)
+        guard actionsResult == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(actionsResult))
         }
-        guard posix_spawnattr_init(&attributes) == 0 else {
+        let attributesResult = posix_spawnattr_init(&attributes)
+        guard attributesResult == 0 else {
             posix_spawn_file_actions_destroy(&actions)
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(attributesResult))
         }
         defer {
             posix_spawn_file_actions_destroy(&actions)
@@ -161,18 +163,21 @@ public struct CommandRunner: Sendable {
         // another command's pipe (which would delay that command's end of output) or the terminal.
         // Standard input is /dev/null: nothing delete runs may wait on a prompt.
         let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
-        guard posix_spawnattr_setflags(&attributes, flags) == 0,
-              posix_spawnattr_setpgroup(&attributes, 0) == 0,
-              posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
-              posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,
-              posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        let setupResults = [
+            posix_spawnattr_setflags(&attributes, flags),
+            posix_spawnattr_setpgroup(&attributes, 0),
+            posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0),
+            posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
+            posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO),
+        ]
+        if let failure = setupResults.first(where: { $0 != 0 }) {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(failure))
         }
 
         let command = [executable.path] + arguments
         let variables = environment.map { "\($0.key)=\($0.value)" }
-        let argv = command.map { $0.withCString { strdup($0) } } + [nil]
-        let envp = variables.map { $0.withCString { strdup($0) } } + [nil]
+        let argv = try cStrings(command)
+        let envp = try cStrings(variables)
         defer {
             argv.dropLast().forEach { free($0) }
             envp.dropLast().forEach { free($0) }
@@ -181,6 +186,22 @@ public struct CommandRunner: Sendable {
         let result = posix_spawn(&processIdentifier, executable.path, &actions, &attributes, argv, envp)
         guard result == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(result)) }
         return processIdentifier
+    }
+
+    /// Allocates the null-terminated C array required by `posix_spawn`, failing rather than
+    /// passing a premature null pointer as argv or envp if the process is out of memory.
+    private static func cStrings(_ strings: [String]) throws -> [UnsafeMutablePointer<CChar>?] {
+        var pointers: [UnsafeMutablePointer<CChar>?] = []
+        pointers.reserveCapacity(strings.count + 1)
+        for string in strings {
+            guard let pointer = strdup(string) else {
+                pointers.forEach { free($0) }
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            pointers.append(pointer)
+        }
+        pointers.append(nil)
+        return pointers
     }
 
     private static func terminationStatus(_ status: Int32) -> Int32 {
