@@ -57,7 +57,9 @@ struct Invocation {
             return
         }
         if first == "completions" && !optionsEnded {
-            guard positional.count == 2, let shell = CompletionShell(rawValue: positional[1]) else { throw UsageError("\"delete completions\" takes one of: fish, zsh, bash.") }
+            guard positional.count == 2, let shell = CompletionShell(rawValue: positional[1]) else {
+                throw UsageError("\"delete completions\" takes one of: fish, zsh, bash.")
+            }
             command = .completions(shell)
             return
         }

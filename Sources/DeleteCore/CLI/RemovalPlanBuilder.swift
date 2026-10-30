@@ -17,7 +17,8 @@ struct RemovalPlanBuilder {
     func build(for application: InstalledApp) throws(Refusal) -> RemovalPlanGroup {
         // Apps installed with it go with it, unless they can't be deleted at all. --no-companions
         // can't split a cask's declared suite because the cask artifacts are modeled together.
-        let companionResult = Protection.refusal(for: application) == nil
+        let companionResult =
+            Protection.refusal(for: application) == nil
             ? Companions.find(for: application, inventory: inventory, roots: roots)
             : Companions.Result()
         let companions = companionResult.companions.filter {
@@ -49,10 +50,13 @@ struct RemovalPlanBuilder {
         var main = try finder.plan(for: application, inventory: inventory, group: group, timing: timing)
         if let folder = companionResult.folder, !companions.isEmpty { main.emptyFolders.append(folder) }
         if !companionResult.partOf.isEmpty {
-            main.notes.append("It was installed as part of \(companionResult.partOf.map { $0.name.terminalInline }.joined(separator: " and ")); deleting \(companionResult.partOf.count == 1 ? "that" : "those") removes it too.")
+            main.notes.append(
+                "It was installed as part of \(companionResult.partOf.map { $0.name.terminalInline }.joined(separator: " and ")); deleting \(companionResult.partOf.count == 1 ? "that" : "those") removes it too."
+            )
         }
         if !companionResult.sameDeveloper.isEmpty {
-            main.notes.append("Also by the same developer, not included: \(companionResult.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
+            main.notes.append(
+                "Also by the same developer, not included: \(companionResult.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
         }
 
         let results = companionPlans.map(\.value)
@@ -62,10 +66,12 @@ struct RemovalPlanBuilder {
         }), case let .failure(error) = failure {
             throw Refusal(message: "Couldn't safely plan the companion app: \(error.message)")
         }
-        let plans = [main] + results.compactMap { result in
-            if case let .success(plan) = result { return plan }
-            return nil
-        }
+        let plans =
+            [main]
+            + results.compactMap { result in
+                if case let .success(plan) = result { return plan }
+                return nil
+            }
         // A companion whose every item another plan already deletes has nothing left to show.
         let distinct = RemovalPlan.deduplicated(plans).enumerated().compactMap { index, plan in
             index == 0 || !plan.findings.isEmpty || !plan.packages.isEmpty || !plan.launchItems.isEmpty ? plan : nil

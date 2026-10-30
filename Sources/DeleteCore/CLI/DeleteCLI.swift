@@ -5,22 +5,22 @@ public enum DeleteCLI {
     public static let version = "2.0.1"
 
     public static let usage = """
-    Usage:
-      delete list [--all] [--json]       Installed apps with size and source
-      delete <app> [--dry-run] [-y]      Delete an app and everything it left behind
-      delete completions <fish|zsh|bash> Print a tab-completion script for that shell
+        Usage:
+          delete list [--all] [--json]       Installed apps with size and source
+          delete <app> [--dry-run] [-y]      Delete an app and everything it left behind
+          delete completions <fish|zsh|bash> Print a tab-completion script for that shell
 
-    <app> is a name, a bundle identifier, or a path; a unique name prefix is enough.
+        <app> is a name, a bundle identifier, or a path; a unique name prefix is enough.
 
-    Options:
-      --all                     Also list macOS components and helper bundles
-      --json                    Machine-readable output (list, and the plan with --dry-run)
-      --dry-run                 Show what would be deleted, delete nothing
-      -y, --yes                 Don't ask before deleting
-      --no-companions           Leave the apps installed with it (FL Studio's FL Cloud Plugins)
-      -h, --help                Show this help
-      --version                 Show the version
-    """
+        Options:
+          --all                     Also list macOS components and helper bundles
+          --json                    Machine-readable output (list, and the plan with --dry-run)
+          --dry-run                 Show what would be deleted, delete nothing
+          -y, --yes                 Don't ask before deleting
+          --no-companions           Leave the apps installed with it (FL Studio's FL Cloud Plugins)
+          -h, --help                Show this help
+          --version                 Show the version
+        """
 
     public static func run(arguments: [String], roots: Roots = .live(), environment: [String: String] = ProcessInfo.processInfo.environment) -> Int32 {
         let invocation: Invocation
@@ -72,14 +72,18 @@ public enum DeleteCLI {
             let allowPrefix = invocation.dryRun || !invocation.assumeYes
             switch AppMatcher.match(query, in: inventory.applications, home: roots.home, allowPrefix: allowPrefix) {
             case let .prefixOnly(application):
-                TerminalInteraction.printError("\"\(query.terminalInline)\" only matches the start of \(application.name.terminalInline)'s name. With -y, give its full name, bundle identifier or path.")
+                TerminalInteraction.printError(
+                    "\"\(query.terminalInline)\" only matches the start of \(application.name.terminalInline)'s name. With -y, give its full name, bundle identifier or path."
+                )
                 return EXIT_FAILURE
             case .notFound:
                 TerminalInteraction.printError("No app matches \"\(query.terminalInline)\". Run \"delete list\" to see installed apps.")
                 return EXIT_FAILURE
             case let .ambiguous(candidates):
                 TerminalInteraction.printError("\"\(query.terminalInline)\" matches several apps:")
-                for candidate in candidates { TerminalInteraction.printError("  \(candidate.name.terminalInline)   \(Format.path(candidate.path, home: roots.home).terminalInline)") }
+                for candidate in candidates {
+                    TerminalInteraction.printError("  \(candidate.name.terminalInline)   \(Format.path(candidate.path, home: roots.home).terminalInline)")
+                }
                 TerminalInteraction.printError("Give the full name, the bundle identifier, or the path.")
                 return EXIT_FAILURE
             case var .found(application):
@@ -92,7 +96,9 @@ public enum DeleteCLI {
     /// Shows the plan (the app's and its companions'), and unless it's a dry run, asks and
     /// deletes. Without root, a plan that needs it is shown whole and, once confirmed, delete
     /// reruns itself under sudo, which asks for the password.
-    static func remove(_ application: InstalledApp, inventory: Inventory, invocation: Invocation, roots: Roots, environment: [String: String], timing: Timing?) -> Int32 {
+    static func remove(_ application: InstalledApp, inventory: Inventory, invocation: Invocation, roots: Roots, environment: [String: String], timing: Timing?)
+        -> Int32
+    {
         // A sandbox run deletes clones under DELETE_SANDBOX instead of the real files.
         var sandbox: Sandbox?
         if let path = environment["DELETE_SANDBOX"]?.nonEmpty {
@@ -126,9 +132,10 @@ public enum DeleteCLI {
         let reasons = planGroup.reasonsByApplicationPath
         timing?.mark("find leftovers")
         func elevates(_ plans: [RemovalPlan]) -> Bool {
-            sandbox == nil && !isRoot && plans.contains {
-                $0.needsRoot() || $0.emptyFolders.contains(where: Remover.needsRoot)
-            }
+            sandbox == nil && !isRoot
+                && plans.contains {
+                    $0.needsRoot() || $0.emptyFolders.contains(where: Remover.needsRoot)
+                }
         }
         func render(_ plans: [RemovalPlan], asRoot: Bool) -> String {
             PlanRenderer.text(plans, reasons: reasons, isRoot: asRoot, home: roots.home, width: TerminalInteraction.width)
@@ -144,7 +151,10 @@ public enum DeleteCLI {
             }
             let elevate = elevates(plans)
             print(render(plans, asRoot: isRoot || elevate))
-            let hint = elevate ? " Deleting it needs administrator rights; delete will ask for your password." : sandbox != nil && plans.contains { $0.needsRoot() } ? " Some of it needs administrator rights." : ""
+            let hint =
+                elevate
+                ? " Deleting it needs administrator rights; delete will ask for your password."
+                : sandbox != nil && plans.contains { $0.needsRoot() } ? " Some of it needs administrator rights." : ""
             print("\nDry run: nothing was deleted." + hint)
             return EXIT_SUCCESS
         }
@@ -152,14 +162,17 @@ public enum DeleteCLI {
         // A dry run may still show the best available evidence, but a destructive run must never
         // infer that another app or package is absent because one of those indexes could not load.
         if !inventory.complete, sandbox == nil {
-            TerminalInteraction.printError("Can't safely delete while discovery is incomplete. Nothing was deleted.\n" + inventory.warnings.map { "  \($0)" }.joined(separator: "\n"))
+            TerminalInteraction.printError(
+                "Can't safely delete while discovery is incomplete. Nothing was deleted.\n" + inventory.warnings.map { "  \($0)" }.joined(separator: "\n"))
             return EXIT_FAILURE
         }
         let actions: SystemActions = sandbox == nil ? LiveSystemActions(tools: roots.tools) : RecordingSystemActions()
         if let sandbox { print("Sandbox run: deleting the copies under \(sandbox.root); nothing outside it is touched.\n") }
         if let blocked = plans.first(where: { !$0.activeSystemExtensions.isEmpty }), sandbox == nil {
             print(render(plans, asRoot: isRoot || elevates(plans)))
-            TerminalInteraction.printError("\nTurn off \(blocked.application.name.terminalInline)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted.")
+            TerminalInteraction.printError(
+                "\nTurn off \(blocked.application.name.terminalInline)'s system extension first (in the app, or System Settings › General › Login Items & Extensions). Nothing was deleted."
+            )
             return EXIT_FAILURE
         }
 
@@ -182,7 +195,8 @@ public enum DeleteCLI {
             }
             for plan in running {
                 if case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
-                    TerminalInteraction.printError("\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
+                    TerminalInteraction.printError(
+                        "\(names.joined(separator: ", ")) didn't quit; it may be waiting for you to save or confirm something. Nothing was deleted.")
                     return EXIT_FAILURE
                 }
             }
@@ -238,8 +252,11 @@ public enum DeleteCLI {
                 reportError: TerminalInteraction.printError)
         }
 
-        let executor = Executor(actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
-        let report = executor.run(group: plans, targets: prepared.findingTargets, emptyTargets: prepared.emptyFolderTargets, launchTargets: prepared.launchTargets, receiptTargets: prepared.receiptTargets, isRoot: isRoot, casks: inventory.casks)
+        let executor = Executor(
+            actions: actions, allowedRoot: sandbox?.root ?? "/", home: roots.home, translate: sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 })
+        let report = executor.run(
+            group: plans, targets: prepared.findingTargets, emptyTargets: prepared.emptyFolderTargets, launchTargets: prepared.launchTargets,
+            receiptTargets: prepared.receiptTargets, isRoot: isRoot, casks: inventory.casks)
         print("")
         print(PlanRenderer.report(report, home: roots.home))
         let needingRoot = plans.flatMap { $0.split(isRoot: isRoot).needingRoot }
