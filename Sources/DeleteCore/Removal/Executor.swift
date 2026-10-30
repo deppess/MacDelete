@@ -49,6 +49,10 @@ public struct Executor {
     /// An app and its companions (`plans[0]` is the app). Companions go first, then the app.
     public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], launchTargets: [[String: LaunchTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
         var report = ExecutionReport()
+        guard targets.count == plans.count else {
+            report.stopped = "Couldn't verify the confirmed removal targets. Nothing was deleted."
+            return report
+        }
         let conditional = emptyTargets.count == plans.count ? emptyTargets : Array(repeating: [:], count: plans.count)
         let launches = launchTargets.count == plans.count ? launchTargets : plans.map { Self.launchTargets(for: $0.launchItems, translate: translate).targets }
         let receipts = receiptTargets.count == plans.count ? receiptTargets : Array(repeating: [:], count: plans.count)

@@ -23,7 +23,11 @@ struct RemovalPlanBuilder {
         let companions = companionResult.companions.filter {
             Protection.refusal(for: $0.application) == nil && (includesCompanions || $0.inseparable)
         }
-        let reasons = Dictionary(uniqueKeysWithValues: companions.map { ($0.application.path, $0.reason) })
+        let reasons = companions.reduce(into: [String: String]()) { reasons, companion in
+            // Several discovery rules can identify the same companion. Preserve the first reason
+            // rather than trapping on duplicate external metadata.
+            reasons[companion.application.path] = reasons[companion.application.path] ?? companion.reason
+        }
         let group = Set([application.path] + companions.map(\.application.path))
         timing?.mark("companions (\(companions.count))")
 

@@ -35,9 +35,13 @@ struct PreparedRemoval {
         let receiptTargets = receiptCaptures.map(\.targets)
 
         let emptyFolderTargets: [[String: RemovalTarget]] = plans.map { plan in
-            Dictionary(uniqueKeysWithValues: plan.emptyFolders.compactMap { folder in
-                FileIdentity.of(translate(folder)).map { (folder, RemovalTarget(path: translate(folder), identity: $0)) }
-            })
+            plan.emptyFolders.reduce(into: [String: RemovalTarget]()) { targets, folder in
+                let path = translate(folder)
+                guard let identity = FileIdentity.of(path) else { return }
+                // A cask's declarative artifacts can repeat a folder. It remains one target,
+                // rather than turning malformed or redundant metadata into a process crash.
+                targets[folder] = targets[folder] ?? RemovalTarget(path: path, identity: identity)
+            }
         }
         let missingEmpty = zip(plans, emptyFolderTargets).flatMap { plan, targets in
             plan.emptyFolders.filter { targets[$0] == nil }

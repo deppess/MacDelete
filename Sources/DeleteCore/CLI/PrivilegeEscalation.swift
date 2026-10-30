@@ -28,7 +28,17 @@ enum PrivilegeEscalation {
             includesCompanions: includesCompanions,
             executable: executable)
         fflush(stdout)
-        var pointers = arguments.map { strdup($0) } + [nil]
+        var pointers: [UnsafeMutablePointer<CChar>?] = []
+        pointers.reserveCapacity(arguments.count + 1)
+        for argument in arguments {
+            guard let pointer = strdup(argument) else {
+                pointers.forEach { free($0) }
+                reportError("Couldn't prepare sudo arguments: \(String(cString: strerror(errno))).")
+                return EXIT_FAILURE
+            }
+            pointers.append(pointer)
+        }
+        pointers.append(nil)
         execv("/usr/bin/sudo", &pointers)
         let error = String(cString: strerror(errno))
         pointers.forEach { free($0) }

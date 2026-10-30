@@ -144,6 +144,18 @@ final class ExecutorTests: XCTestCase {
         ])
     }
 
+    func testGroupWithMismatchedConfirmedTargetsFailsClosed() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
+            .run(group: [plan], targets: [], isRoot: false, casks: [])
+        XCTAssertEqual(report.stopped, "Couldn't verify the confirmed removal targets. Nothing was deleted.")
+        XCTAssertTrue(report.deleted.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plan.application.path))
+    }
+
     func testLaunchStopFailureLeavesEveryFindingUntouched() throws {
         final class FailingActions: SystemActions, @unchecked Sendable {
             func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
