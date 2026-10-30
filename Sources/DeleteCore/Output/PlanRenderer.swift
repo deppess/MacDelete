@@ -25,21 +25,27 @@ public enum PlanRenderer {
 
         let application = plan.application
         let total = (deleting + needingRoot).reduce(Int64(0)) { $0 + $1.size }
-        var header = [application.name.terminalInline, application.version?.terminalInline, Format.size(total), "(\(sourceLabel(application.source)))"].compactMap { $0 }.joined(separator: "   ")
+        var header = [application.name.terminalInline, application.version?.terminalInline, Format.size(total), "(\(sourceLabel(application.source)))"]
+            .compactMap { $0 }.joined(separator: "   ")
         if plan.running { header += "   running" }
         var lines = [header]
         if !deleting.isEmpty { lines += [""] + ordered(deleting, plan: plan).map(row) }
 
         if plan.appNeedsRoot(isRoot: isRoot) {
-            lines += ["", "  \(application.name.terminalInline) itself needs administrator rights, so all of this needs sudo:"] + ordered(needingRoot, plan: plan).map(row)
+            lines +=
+                ["", "  \(application.name.terminalInline) itself needs administrator rights, so all of this needs sudo:"]
+                + ordered(needingRoot, plan: plan).map(row)
         } else if !needingRoot.isEmpty {
             lines += ["", "  Needs administrator rights (run with sudo to include these):"] + needingRoot.map(row)
         }
         if !plan.skipped.isEmpty {
             // Reasons aligned among themselves (kept items have no size column).
             let kept = plan.skipped.map { (display($0.path, home: home), $0.reason.terminalInline) }
-            let keptWidth = width.map { min(kept.map { $0.0.terminalDisplayWidth }.max() ?? 0, max(40, $0 - 40)) } ?? (kept.map { $0.0.terminalDisplayWidth }.max() ?? 0)
-            lines += ["", "  Kept:"] + kept.map { path, reason in "  " + path + String(repeating: " ", count: max(3, keptWidth - path.terminalDisplayWidth + 3)) + reason }
+            let keptWidth =
+                width.map { min(kept.map { $0.0.terminalDisplayWidth }.max() ?? 0, max(40, $0 - 40)) } ?? (kept.map { $0.0.terminalDisplayWidth }.max() ?? 0)
+            lines +=
+                ["", "  Kept:"]
+                + kept.map { path, reason in "  " + path + String(repeating: " ", count: max(3, keptWidth - path.terminalDisplayWidth + 3)) + reason }
         }
 
         var also: [String] = []
@@ -48,9 +54,14 @@ public enum PlanRenderer {
         if plan.emptyFolders.count == 1 {
             also.append("removes \(display(plan.emptyFolders[0], home: home)) if nothing is left in it")
         } else if plan.emptyFolders.count > 1 {
-            also.append("removes \(count(plan.emptyFolders.count, "folder")) once they're empty (\(plan.emptyFolders.map { display($0, home: home) }.min { $0.count < $1.count } ?? "")…)")
+            also.append(
+                "removes \(count(plan.emptyFolders.count, "folder")) once they're empty (\(plan.emptyFolders.map { display($0, home: home) }.min { $0.count < $1.count } ?? "")…)"
+            )
         }
-        if !plan.packages.isEmpty { also.append("forgets the installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", "))\(isRoot ? "" : " (needs sudo)")") }
+        if !plan.packages.isEmpty {
+            also.append(
+                "forgets the installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", "))\(isRoot ? "" : " (needs sudo)")")
+        }
         if !plan.identifiers.isEmpty { also.append("resets its privacy permissions") }
         if !also.isEmpty { lines += ["", "  Also: " + also.joined(separator: "; ") + "."] }
 
@@ -60,7 +71,9 @@ public enum PlanRenderer {
         }
         if plan.running { notes.insert("\(application.name.terminalInline) is running; it will be asked to quit first.", at: 0) }
         if !plan.unreadable.isEmpty {
-            notes.append("Couldn't read \(count(plan.unreadable.count, "folder")) (\(plan.unreadable.prefix(3).map { display($0, home: home) }.joined(separator: ", "))\(plan.unreadable.count > 3 ? ", …" : "")). Grant Full Disk Access to your terminal (System Settings › Privacy & Security) to see everything.")
+            notes.append(
+                "Couldn't read \(count(plan.unreadable.count, "folder")) (\(plan.unreadable.prefix(3).map { display($0, home: home) }.joined(separator: ", "))\(plan.unreadable.count > 3 ? ", …" : "")). Grant Full Disk Access to your terminal (System Settings › Privacy & Security) to see everything."
+            )
         }
         if !notes.isEmpty { lines += [""] + notes.map { "  Note: " + $0 } }
         return lines.joined(separator: "\n")
@@ -73,7 +86,9 @@ public enum PlanRenderer {
         var parts = [text(main, isRoot: isRoot, home: home, width: width)]
         if plans.count > 1 {
             let keepable = plans.dropFirst().contains { $0.homebrewCask == nil }
-            parts.append("Installed with \(main.application.name.terminalInline), so deleted with it\(keepable ? " (keep \(plans.count == 2 ? "it" : "them") with --no-companions)" : ""):")
+            parts.append(
+                "Installed with \(main.application.name.terminalInline), so deleted with it\(keepable ? " (keep \(plans.count == 2 ? "it" : "them") with --no-companions)" : ""):"
+            )
             for plan in plans.dropFirst() {
                 var lines = text(plan, isRoot: isRoot, home: home, width: width).components(separatedBy: "\n")
                 if let reason = reasons[plan.application.path] { lines[0] += "   " + reason.terminalInline }
@@ -104,18 +119,23 @@ public enum PlanRenderer {
         struct Job: Encodable { let label: String; let plist: String; let domain: String }
         struct Document: Encodable {
             let name: String; let path: String; let bundleIdentifier: String?; let version: String?; let source: String; let homebrewCask: String?
-            let identifiers: [String]; let findings: [Item]; let kept: [Kept]; let launchItems: [Job]; let packages: [String]; let unreadable: [String]; let emptyFolders: [String]
+            let identifiers: [String]; let findings: [Item]; let kept: [Kept]; let launchItems: [Job]; let packages: [String]; let unreadable: [String];
+            let emptyFolders: [String]
             let activeSystemExtensions: [String]; let running: Bool; let notes: [String]; let companionReason: String?; let companions: [Document]?
         }
         func document(_ plan: RemovalPlan, reason: String?, companions: [Document]?) -> Document {
             let application = plan.application
             return Document(
-                name: application.name, path: application.path, bundleIdentifier: application.bundleIdentifier, version: application.version, source: application.source.label,
+                name: application.name, path: application.path, bundleIdentifier: application.bundleIdentifier, version: application.version,
+                source: application.source.label,
                 homebrewCask: plan.homebrewCask, identifiers: plan.identifiers,
-                findings: plan.findings.map { Item(path: $0.path, tier: $0.tier.rawValue, reason: $0.reason, size: $0.size, sizeComplete: $0.sizeComplete, needsRoot: $0.needsRoot) },
+                findings: plan.findings.map {
+                    Item(path: $0.path, tier: $0.tier.rawValue, reason: $0.reason, size: $0.size, sizeComplete: $0.sizeComplete, needsRoot: $0.needsRoot)
+                },
                 kept: plan.skipped.map { Kept(path: $0.path, reason: $0.reason) },
                 launchItems: plan.launchItems.map { Job(label: $0.label, plist: $0.plist, domain: $0.domain.rawValue) },
-                packages: plan.packages, unreadable: plan.unreadable, emptyFolders: plan.emptyFolders, activeSystemExtensions: plan.activeSystemExtensions, running: plan.running, notes: plan.notes,
+                packages: plan.packages, unreadable: plan.unreadable, emptyFolders: plan.emptyFolders, activeSystemExtensions: plan.activeSystemExtensions,
+                running: plan.running, notes: plan.notes,
                 companionReason: reason, companions: companions)
         }
         let document = document(plan, reason: nil, companions: companions.map { document($0.plan, reason: $0.reason, companions: nil) })

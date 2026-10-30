@@ -4,7 +4,10 @@ public enum ListRenderer {
     public static func text(_ applications: [InstalledApp], home: URL) -> String {
         guard !applications.isEmpty else { return "No applications found." }
         let rows = applications.map { application -> [String] in
-            [application.name.terminalInline, (application.version ?? "").terminalInline, application.size.map(Format.size) ?? "?", application.source.label.terminalInline]
+            [
+                application.name.terminalInline, (application.version ?? "").terminalInline, application.size.map(Format.size) ?? "?",
+                application.source.label.terminalInline
+            ]
         }
         let sizeWidth = rows.map { $0[2].count }.max() ?? 0
         let aligned = rows.map { row in [row[0], row[1], String(repeating: " ", count: sizeWidth - row[2].count) + row[2], row[3]] }

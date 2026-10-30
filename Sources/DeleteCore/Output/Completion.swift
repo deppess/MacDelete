@@ -23,14 +23,19 @@ public enum Completion {
         var counts: [String: Int] = [:]
         for application in offered { counts[application.name.lowercased(), default: 0] += 1 }
         var seen = Set<String>()
-        return offered.filter { lowered.isEmpty || $0.name.lowercased().hasPrefix(lowered) || $0.alternateNames.contains { $0.lowercased().hasPrefix(lowered) } }
-            .filter { seen.insert($0.name.lowercased()).inserted }
-            .map { application in
-                // Two apps with one name can only be told apart by path.
-                let count = counts[application.name.lowercased()] ?? 1
-                let details = count > 1 ? ["\(count) apps with this name: give a path"] : [application.version, application.source.label, application.size.map(Format.size)].compactMap { $0 }
-                return (value: clean(application.name), description: clean(details.joined(separator: " · ")))
-            }
+        return offered.filter {
+            lowered.isEmpty || $0.name.lowercased().hasPrefix(lowered) || $0.alternateNames.contains { $0.lowercased().hasPrefix(lowered) }
+        }
+        .filter { seen.insert($0.name.lowercased()).inserted }
+        .map { application in
+            // Two apps with one name can only be told apart by path.
+            let count = counts[application.name.lowercased()] ?? 1
+            let details =
+                count > 1
+                ? ["\(count) apps with this name: give a path"]
+                : [application.version, application.source.label, application.size.map(Format.size)].compactMap { $0 }
+            return (value: clean(application.name), description: clean(details.joined(separator: " · ")))
+        }
     }
 
     public static func lines(_ candidates: [(value: String, description: String)]) -> String {
