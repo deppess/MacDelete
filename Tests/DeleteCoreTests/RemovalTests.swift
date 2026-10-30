@@ -89,6 +89,61 @@ final class RemoverTests: XCTestCase {
 }
 
 final class ExecutorTests: XCTestCase {
+    func testPreparedRemovalBindsEveryCapturedTargetToItsFingerprint() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+
+        let prepared = try PreparedRemoval.prepare(
+            plans: [plan], receipts: PackageReceipts(), isRoot: false, sandbox: nil, home: system.home)
+        XCTAssertEqual(prepared.findingTargets.count, 1)
+        XCTAssertEqual(prepared.findingTargets[0].map(\.finding.path), plan.split(isRoot: false).deleting.map(\.path))
+        XCTAssertEqual(prepared.launchTargets[0].count, plan.launchItems.count)
+
+        let changedPlist = try XCTUnwrap(plan.launchItems.first?.plist)
+        try FileManager.default.removeItem(atPath: changedPlist)
+        try system.writePlist(["Label": "com.example.app.agent", "Program": "/usr/bin/false"], to: URL(filePath: changedPlist))
+        let recaptured = try PreparedRemoval.prepare(
+            plans: [plan], receipts: PackageReceipts(), isRoot: false, sandbox: nil, home: system.home)
+        XCTAssertNotEqual(prepared.fingerprint, recaptured.fingerprint)
+    }
+
+    func testPreparedRemovalRefusesASelectedTargetThatDisappears() throws {
+        let system = try FakeSystem()
+        try makeExample(system)
+        let plan = try system.plan("Example")
+        let missing = try XCTUnwrap(plan.split(isRoot: false).deleting.first { !plan.isOwn($0) })
+        try FileManager.default.removeItem(atPath: missing.path)
+
+        XCTAssertThrowsError(try PreparedRemoval.prepare(
+            plans: [plan], receipts: PackageReceipts(), isRoot: false, sandbox: nil, home: system.home
+        )) { error in
+            guard case let PreparationError.findings(findings) = error else {
+                return XCTFail("Expected a missing finding, got \(error)")
+            }
+            XCTAssertEqual(findings.map(\.path), [missing.path])
+        }
+    }
+
+    func testApprovalFingerprintIsCanonicalAndBindsPlanStructure() {
+        let first = RemovalPlan(application: app("First"), identifiers: [], findings: [], skipped: [], launchItems: [], packages: ["b", "a"], unreadable: [], notes: [], running: false, homebrewCask: nil)
+        let reordered = RemovalPlan(application: app("First"), identifiers: [], findings: [], skipped: [], launchItems: [], packages: ["a", "b"], unreadable: [], notes: [], running: false, homebrewCask: nil)
+        let changedCask = RemovalPlan(application: app("First"), identifiers: [], findings: [], skipped: [], launchItems: [], packages: ["a", "b"], unreadable: [], notes: [], running: false, homebrewCask: "first")
+        XCTAssertEqual(RemovalPlan.fingerprint([first]), RemovalPlan.fingerprint([reordered]))
+        XCTAssertNotEqual(RemovalPlan.fingerprint([first]), RemovalPlan.fingerprint([changedCask]))
+    }
+
+    func testSudoArgumentsKeepTheAppPathAsOneTerminatedArgument() {
+        let application = app("--unexpected app")
+        let arguments = PrivilegeEscalation.arguments(
+            application: application,
+            fingerprint: "approved", includesCompanions: false, executable: "/Applications/delete")
+        XCTAssertEqual(arguments, [
+            "/usr/bin/sudo", "--", "/Applications/delete", "--approved", "approved",
+            "--no-companions", "--", application.path
+        ])
+    }
+
     func testLaunchStopFailureLeavesEveryFindingUntouched() throws {
         final class FailingActions: SystemActions, @unchecked Sendable {
             func quit(identifiers: [String], bundlePath: String) -> QuitResult { .quit }
