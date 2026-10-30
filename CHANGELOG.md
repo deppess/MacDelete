@@ -12,6 +12,11 @@ All notable changes to `delete` are documented here.
 - Uses a versioned, canonical length-prefixed encoding for approval fingerprints before SHA-256.
 - Adds regression coverage for changed or missing prepared targets, fingerprint structure, and
   shell-free sudo argument construction.
+- Refuses malformed duplicate companion and empty-folder metadata, mismatched confirmed target
+  groups, and failed sudo/command argument allocation rather than trapping or executing a partial
+  request.
+- Adds direct command-runner coverage for captured output, output-limit termination, and process
+  timeouts.
 
 ### Changed
 
@@ -19,6 +24,12 @@ All notable changes to `delete` are documented here.
   and removal preparation from the command coordinator.
 - The quality gate now includes release-mode tests and shell syntax checks; CI pins its checkout
   action to an immutable revision.
+- The quality gate now enforces strict repository Swift formatting; all production and test Swift
+  sources conform to the configured formatter.
+- Extracts identity-bound target preparation, command invocation, terminal interaction, privilege
+  escalation, removal-plan grouping, and identifier evidence into focused units.
+- Documents the deletion trust boundaries, fail-closed invariants, and non-goals in
+  `docs/THREAT_MODEL.md`.
 
 ## 2.0.0 — 2026-10-28
 
