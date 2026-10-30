@@ -87,52 +87,13 @@ public struct EvidenceFinder: Sendable {
             collector.add(Finding(path: application.bundlePath, tier: .exact, reason: "the app the link points to"), exempt: true)
         }
 
-        // Items named by an identifier.
         let library = roots.home.appending(path: "Library", directoryHint: .isDirectory)
-        var identifierFolders: [(URL, String?)] = [
-            "Application Support", "Caches", "Preferences", "Preferences/ByHost", "Containers", "Saved Application State", "HTTPStorages", "WebKit",
-            "Cookies", "Logs", "Application Scripts", "Autosave Information", "SyncedPreferences", "Input Methods", "Group Containers"
-        ].map { (library.appending(path: $0, directoryHint: .isDirectory), nil) }
-        identifierFolders += [
-            (
-                library.appending(path: "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"),
-                "recent documents list"
-            ),
-            (library.appending(path: "Caches/com.plausiblelabs.crashreporter.data"), "crash data"),
-            // Help Viewer's copy of the app's help book (`<id>.help*<version>`).
-            (library.appending(path: "Caches/com.apple.helpd/Generated"), "help cache"),
-            (library.appending(path: "Caches/com.apple.nsurlsessiond/Downloads"), "background downloads"),
-            (library.appending(path: "WebKit/Databases/___IndexedDB"), "web storage"),
-            (library.appending(path: "Preferences/com.apple.FileProvider"), "file provider settings")
-        ]
-        identifierFolders += ["Application Support", "Caches", "Preferences", "Logs", "Input Methods"].map {
-            (roots.library.appending(path: $0, directoryHint: .isDirectory), nil)
-        }
-        identifierFolders += [
-            (roots.library.appending(path: "PrivilegedHelperTools"), nil),
-            (roots.library.appending(path: "Receipts"), "old installer receipt")
-        ]
-        identifierFolders += [roots.userCache, roots.userTemp].compactMap { $0 }.map { ($0, "temporary files") }
-        if let clones = roots.codeSigningClones { identifierFolders.append((clones, "code-signing copy")) }
-
-        for (folder, reason) in identifierFolders {
-            // Most entries can't be the app's at all; they're ruled out before the ownership rules.
-            for name in collector.list(folder) where ownership.mightBelongToTarget(name) {
-                switch ownership.owner(ofItemNamed: name) {
-                case .target?:
-                    let via = Self.matchedIdentifier(name, identifiers: identifiers)
-                    let helperNote = via.flatMap { helperKinds[$0.lowercased()] }
-                    collector.add(
-                        Finding(
-                            path: folder.appending(path: name).path, tier: .exact,
-                            reason: [reason, helperNote].compactMap { $0 }.joined(separator: ", ").nonEmpty))
-                case let .shared(other)?:
-                    collector.skip(folder.appending(path: name).path, "also belongs to \(Format.path(other, home: roots.home))")
-                case .other?, nil:
-                    continue
-                }
-            }
-        }
+        IdentifierEvidence.collect(
+            into: &collector,
+            identifiers: identifiers,
+            ownership: ownership,
+            helperKinds: helperKinds,
+            roots: roots)
 
         timing?.mark("  identifier folders")
         // Sandbox containers named by UUID (iOS and Catalyst apps), identified by their metadata.
