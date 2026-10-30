@@ -108,60 +108,22 @@ public enum DeleteCLI {
             return 2
         }
 
-        // Apps installed with it go with it, unless they can't be deleted at all. --no-companions
-        // can't split a cask's declared suite because the cask artifacts are modeled together.
-        let found = Protection.refusal(for: application) == nil ? Companions.find(for: application, inventory: inventory, roots: roots) : Companions.Result()
-        let companions = found.companions.filter { Protection.refusal(for: $0.application) == nil && (invocation.withCompanions || $0.inseparable) }
-        var reasons: [String: String] = [:]
-        for companion in companions { reasons[companion.application.path] = companion.reason }
-        let group = Set([application.path] + companions.map(\.application.path))
-        timing?.mark("companions (\(companions.count))")
-
-        let finder = EvidenceFinder(roots: roots)
-        func makePlans() throws(Refusal) -> [RemovalPlan] {
-            // The companions' plans are made while the app's is.
-            let companionPlans = companions.map { companion in
-                Concurrent { () -> Result<RemovalPlan, Refusal> in
-                    var other = companion.application
-                    other.source = Inventory.source(of: other, casks: inventory.casks, receipts: inventory.receipts)
-                    do {
-                        return .success(try finder.plan(for: other, inventory: inventory, group: group))
-                    } catch let error as Refusal {
-                        return .failure(error)
-                    } catch {
-                        return .failure(Refusal(message: error.localizedDescription))
-                    }
-                }
-            }
-            var main = try finder.plan(for: application, inventory: inventory, group: group, timing: timing)
-            if let folder = found.folder, !companions.isEmpty { main.emptyFolders.append(folder) }
-            if !found.partOf.isEmpty {
-                main.notes.append("It was installed as part of \(found.partOf.map { $0.name.terminalInline }.joined(separator: " and ")); deleting \(found.partOf.count == 1 ? "that" : "those") removes it too.")
-            }
-            if !found.sameDeveloper.isEmpty {
-                main.notes.append("Also by the same developer, not included: \(found.sameDeveloper.map { $0.name.terminalInline }.joined(separator: ", ")).")
-            }
-            let results = companionPlans.map { $0.value }
-            if let failure = results.first(where: {
-                if case .failure = $0 { return true }
-                return false
-            }), case let .failure(error) = failure {
-                throw Refusal(message: "Couldn't safely plan the companion app: \(error.message)")
-            }
-            let plans = [main] + results.compactMap { result in
-                if case let .success(plan) = result { return plan }
-                return nil
-            }
-            // A companion whose every item another plan already deletes (a helper inside a folder
-            // the app's package installed) has nothing left to show.
-            let distinct = RemovalPlan.deduplicated(plans).enumerated().filter { $0.offset == 0 || !$0.element.findings.isEmpty || !$0.element.packages.isEmpty || !$0.element.launchItems.isEmpty }.map(\.element)
-            return sandbox.map { sandbox in distinct.map(sandbox.translate) } ?? distinct
-        }
+        let planBuilder = RemovalPlanBuilder(
+            inventory: inventory,
+            roots: roots,
+            includesCompanions: invocation.withCompanions,
+            sandbox: sandbox,
+            timing: timing)
+        let planGroup: RemovalPlanGroup
         var plans: [RemovalPlan]
-        do { plans = try makePlans() } catch {
+        do {
+            planGroup = try planBuilder.build(for: application)
+            plans = planGroup.plans
+        } catch {
             printError(error.message)
             return EXIT_FAILURE
         }
+        let reasons = planGroup.reasonsByApplicationPath
         timing?.mark("find leftovers")
         func elevates(_ plans: [RemovalPlan]) -> Bool {
             sandbox == nil && !isRoot && plans.contains {
@@ -224,7 +186,7 @@ public enum DeleteCLI {
                     return EXIT_FAILURE
                 }
             }
-            do { plans = try makePlans() } catch {
+            do { plans = try planBuilder.build(for: application).plans } catch {
                 printError(error.message)
                 return EXIT_FAILURE
             }
