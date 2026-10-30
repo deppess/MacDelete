@@ -26,7 +26,7 @@ public enum DiskUsage {
             case FTS_DNR, FTS_ERR, FTS_NS:
                 usage.complete = false
             case FTS_D:
-                continue // counted once, on the way out (FTS_DP)
+                continue  // counted once, on the way out (FTS_DP)
             default:
                 guard let info = entry.pointee.fts_statp?.pointee else { continue }
                 if let owner, info.st_uid != owner { usage.foreignOwned = true }

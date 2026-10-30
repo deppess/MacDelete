@@ -35,7 +35,9 @@ func isRegularExecutable(_ url: URL) -> Bool {
 public struct CommandRunner: Sendable {
     public init() {}
 
-    public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024) throws -> CommandResult {
+    public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024)
+        throws -> CommandResult
+    {
         guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path) else { throw CommandRunnerError.notExecutable(executable) }
         guard timeout > 0, outputLimit > 0 else { throw CommandRunnerError.outputTooLarge(executable) }
         let stdout = Pipe()
@@ -168,7 +170,7 @@ public struct CommandRunner: Sendable {
             posix_spawnattr_setpgroup(&attributes, 0),
             posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0),
             posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
-            posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO),
+            posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
         ]
         if let failure = setupResults.first(where: { $0 != 0 }) {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(failure))

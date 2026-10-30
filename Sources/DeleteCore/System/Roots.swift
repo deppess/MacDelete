@@ -30,7 +30,10 @@ public struct Roots: Sendable {
     /// `/Users/Shared`, which every user of the Mac can write to.
     public var sharedUsers: URL { URL(filePath: systemRoot, directoryHint: .isDirectory).appending(path: "Users/Shared", directoryHint: .isDirectory) }
 
-    public init(home: URL, applicationRoots: [ApplicationRoot], homebrewPrefixes: [URL] = [], receipts: URL, spotlight: Bool = false, library: URL? = nil, userCache: URL? = nil, userTemp: URL? = nil, homebrewCatalog: URL? = nil) {
+    public init(
+        home: URL, applicationRoots: [ApplicationRoot], homebrewPrefixes: [URL] = [], receipts: URL, spotlight: Bool = false, library: URL? = nil,
+        userCache: URL? = nil, userTemp: URL? = nil, homebrewCatalog: URL? = nil
+    ) {
         self.home = home
         self.applicationRoots = applicationRoots
         self.homebrewPrefixes = homebrewPrefixes
@@ -55,14 +58,18 @@ public struct Roots: Sendable {
                 ApplicationRoot(url: URL(filePath: "/System/Library/CoreServices", directoryHint: .isDirectory), classification: .system, required: true),
                 ApplicationRoot(url: URL(filePath: "/Library/CoreServices", directoryHint: .isDirectory), classification: .system, required: false),
                 // Steam games, also when Spotlight is off: `common/<game>/<…>/Game.app`.
-                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common", directoryHint: .isDirectory), classification: .user, required: false, maxDepth: 2, extensionlessBundles: true),
+                ApplicationRoot(
+                    url: home.appending(path: "Library/Application Support/Steam/steamapps/common", directoryHint: .isDirectory), classification: .user,
+                    required: false, maxDepth: 2, extensionlessBundles: true)
             ],
             homebrewPrefixes: homebrewPrefixes(environment: environment),
             receipts: URL(filePath: "/var/db/receipts", directoryHint: .isDirectory),
             spotlight: true,
             userCache: userFolder(_CS_DARWIN_USER_CACHE_DIR, letter: "C", environment: environment),
             userTemp: userFolder(_CS_DARWIN_USER_TEMP_DIR, letter: "T", environment: environment),
-            homebrewCatalog: environment["HOMEBREW_CACHE"].flatMap { isSafeAbsolutePath($0) ? URL(filePath: $0, directoryHint: .isDirectory).appending(path: "api") : nil }
+            homebrewCatalog: environment["HOMEBREW_CACHE"].flatMap {
+                isSafeAbsolutePath($0) ? URL(filePath: $0, directoryHint: .isDirectory).appending(path: "api") : nil
+            }
         )
     }
 
@@ -116,7 +123,8 @@ public struct Roots: Sendable {
             let url = URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.appending(path: "Caskroom").path, isDirectory: &isDirectory), isDirectory.boolValue,
-                  seen.insert(url.resolvingSymlinksInPath().path).inserted else { return nil }
+                seen.insert(url.resolvingSymlinksInPath().path).inserted
+            else { return nil }
             return url
         }
     }
