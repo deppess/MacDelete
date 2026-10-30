@@ -8,4 +8,6 @@ cd "$project"
 swift test
 .claude/hooks/test-guard-delete.sh
 swift build -c release --product delete
+swift test -c release
+zsh -n Scripts/quality Scripts/format Scripts/benchmark Scripts/sandbox Scripts/sandbox-all Scripts/testapps
 git diff --check
