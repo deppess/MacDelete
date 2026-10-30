@@ -5,7 +5,8 @@ import XCTest
 final class ScannerTests: XCTestCase {
     func testFindsTopLevelAppsAndSkipsNestedOnes() throws {
         let system = try FakeSystem()
-        try system.makeApp("Raycast.app", metadata: ["CFBundleIdentifier": "com.raycast.macos", "CFBundleShortVersionString": "1.98.2", "CFBundleName": "Raycast"])
+        try system.makeApp(
+            "Raycast.app", metadata: ["CFBundleIdentifier": "com.raycast.macos", "CFBundleShortVersionString": "1.98.2", "CFBundleName": "Raycast"])
         try system.makeApp("DaVinci Resolve/DaVinci Resolve.app", metadata: ["CFBundleIdentifier": "com.blackmagic-design.DaVinciResolve"])
         try system.makeApp("Raycast.app/Contents/Library/LoginItems/Helper.app", metadata: ["CFBundleIdentifier": "com.raycast.helper"])
         try system.makeApp("Tool.framework/Versions/A/Resources/Inner.app", metadata: ["CFBundleIdentifier": "com.example.inner"])
@@ -39,7 +40,9 @@ final class ScannerTests: XCTestCase {
         let wrapper = system.applications.appending(path: "Pocket Game.app", directoryHint: .isDirectory)
         let inner = wrapper.appending(path: "Wrapper/PocketGame.app", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
-        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "com.example.pocketgame", "CFBundleShortVersionString": "2.0"], format: .xml, options: 0).write(to: inner.appending(path: "Info.plist"))
+        try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": "com.example.pocketgame", "CFBundleShortVersionString": "2.0"], format: .xml, options: 0
+        ).write(to: inner.appending(path: "Info.plist"))
         try FileManager.default.createSymbolicLink(atPath: wrapper.appending(path: "WrappedBundle").path, withDestinationPath: "Wrapper/PocketGame.app")
 
         let shortcut = try system.makeApp("Balatro.app", in: system.home.appending(path: "Applications"), metadata: ["CFBundleExecutable": "run.sh"])
@@ -75,19 +78,24 @@ final class SourceTests: XCTestCase {
     func testCaskroomReceiptsGiveAppsTargetsSuitesAndPackages() throws {
         let system = try FakeSystem()
         let metadata = system.homebrew.appending(path: "Caskroom/raycast/.metadata")
-        try system.writeJSON(["source": ["version": "1.98.2"], "uninstall_artifacts": [
-            ["app": ["Raycast.app"]],
-            ["app": ["Nested/Other.app", ["target": "Renamed.app"]]],
-            ["suite": ["Raycast Tools"]],
-            ["uninstall": [["pkgutil": ["com.raycast.pkg", "com.raycast.driver.*"], "quit": "com.raycast.macos"]]],
-        ]], to: metadata.appending(path: "INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            [
+                "source": ["version": "1.98.2"],
+                "uninstall_artifacts": [
+                    ["app": ["Raycast.app"]],
+                    ["app": ["Nested/Other.app", ["target": "Renamed.app"]]],
+                    ["suite": ["Raycast Tools"]],
+                    ["uninstall": [["pkgutil": ["com.raycast.pkg", "com.raycast.driver.*"], "quit": "com.raycast.macos"]]]
+                ]
+            ], to: metadata.appending(path: "INSTALL_RECEIPT.json"))
         try system.writeJSON(["default": ["appdir": "~/Applications"]], to: metadata.appending(path: "config.json"))
 
         let casks = Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home)
         XCTAssertEqual(casks.count, 1)
         let cask = try XCTUnwrap(casks.first)
         XCTAssertEqual(cask.version, "1.98.2")
-        XCTAssertEqual(cask.appPaths, [system.home.appending(path: "Applications/Raycast.app").path, system.home.appending(path: "Applications/Renamed.app").path])
+        XCTAssertEqual(
+            cask.appPaths, [system.home.appending(path: "Applications/Raycast.app").path, system.home.appending(path: "Applications/Renamed.app").path])
         XCTAssertEqual(cask.suitePaths, [system.home.appending(path: "Applications/Raycast Tools").path])
         XCTAssertEqual(cask.packagePatterns, ["com.raycast.pkg", "com.raycast.driver.*"])
         XCTAssertEqual(cask.removalArtifactPaths, [])
@@ -99,16 +107,19 @@ final class SourceTests: XCTestCase {
 
     func testCaskWithoutAppdirConfigUsesApplications() throws {
         let system = try FakeSystem()
-        try system.writeJSON(["uninstall_artifacts": [["app": ["GIMP.app"]]]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            ["uninstall_artifacts": [["app": ["GIMP.app"]]]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/INSTALL_RECEIPT.json"))
         XCTAssertEqual(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first?.appPaths, ["/Applications/GIMP.app"])
     }
 
     func testOnlyFullyModelledCaskArtifactsMayBeReplicated() throws {
         let system = try FakeSystem()
-        try system.writeJSON(["uninstall_artifacts": [["app": ["Safe.app"]], ["zap": [["delete": "~/Library/Caches/safe"]]]]],
-                             to: system.homebrew.appending(path: "Caskroom/safe/.metadata/INSTALL_RECEIPT.json"))
-        try system.writeJSON(["uninstall_artifacts": [["app": ["Wrapper.app"]], ["command_wrapper": ["wrapper", ["content": "#!/bin/sh"]]]]],
-                             to: system.homebrew.appending(path: "Caskroom/wrapper/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            ["uninstall_artifacts": [["app": ["Safe.app"]], ["zap": [["delete": "~/Library/Caches/safe"]]]]],
+            to: system.homebrew.appending(path: "Caskroom/safe/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            ["uninstall_artifacts": [["app": ["Wrapper.app"]], ["command_wrapper": ["wrapper", ["content": "#!/bin/sh"]]]]],
+            to: system.homebrew.appending(path: "Caskroom/wrapper/.metadata/INSTALL_RECEIPT.json"))
         let casks = Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home)
         XCTAssertTrue(try XCTUnwrap(casks.first { $0.token == "safe" }).mayReplicateUninstall)
         let wrapper = try XCTUnwrap(casks.first { $0.token == "wrapper" })
@@ -120,10 +131,12 @@ final class SourceTests: XCTestCase {
         let system = try FakeSystem()
         let deleted = system.root.appending(path: "Library/Application Support/Example/helper")
         let emptied = system.root.appending(path: "Library/Application Support/Example")
-        let receipt: [String: Any] = ["uninstall_artifacts": [
-            ["app": ["Example.app"]],
-            ["uninstall": [["delete": deleted.path, "rmdir": emptied.path]]],
-        ]]
+        let receipt: [String: Any] = [
+            "uninstall_artifacts": [
+                ["app": ["Example.app"]],
+                ["uninstall": [["delete": deleted.path, "rmdir": emptied.path]]]
+            ]
+        ]
         try system.writeJSON(receipt, to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
         let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
         XCTAssertTrue(cask.mayReplicateUninstall)
@@ -142,8 +155,9 @@ final class SourceTests: XCTestCase {
 
     func testDeclarativeLaunchctlLabelsAreParsedOnlyAsLabels() throws {
         let system = try FakeSystem()
-        try system.writeJSON(["uninstall_artifacts": [["uninstall": [["launchctl": ["com.example.agent", "com.example.daemon"]]]]]],
-                             to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            ["uninstall_artifacts": [["uninstall": [["launchctl": ["com.example.agent", "com.example.daemon"]]]]]],
+            to: system.homebrew.appending(path: "Caskroom/example/.metadata/INSTALL_RECEIPT.json"))
         let cask = try XCTUnwrap(Caskroom.installedCasks(prefixes: [system.homebrew], home: system.home).first)
         XCTAssertTrue(cask.mayReplicateUninstall)
         XCTAssertEqual(cask.launchctlLabels, ["com.example.agent", "com.example.daemon"])
@@ -187,25 +201,38 @@ final class SourceTests: XCTestCase {
     }
 
     func testBOMListingYieldsTopLevelApplications() {
-        let listing = Data(".\n./Applications\n./Applications/Vital.app\n./Applications/Vital.app/Contents\n./Applications/Vital.app/Contents/Helpers/Helper.app\n./Applications/DaVinci Resolve/DaVinci Resolve.app\n./Library/Audio\n".utf8)
-        XCTAssertEqual(PackageReceipts.applicationPaths(bomOutput: listing, installPrefix: "/"), ["/Applications/Vital.app", "/Applications/DaVinci Resolve/DaVinci Resolve.app"])
-        XCTAssertEqual(PackageReceipts.applicationPaths(bomOutput: Data(".\n./Contents\n".utf8), installPrefix: "Applications/FL Cloud Plugins.app"), ["/Applications/FL Cloud Plugins.app"])
+        let listing = Data(
+            ".\n./Applications\n./Applications/Vital.app\n./Applications/Vital.app/Contents\n./Applications/Vital.app/Contents/Helpers/Helper.app\n./Applications/DaVinci Resolve/DaVinci Resolve.app\n./Library/Audio\n"
+                .utf8)
+        XCTAssertEqual(
+            PackageReceipts.applicationPaths(bomOutput: listing, installPrefix: "/"),
+            ["/Applications/Vital.app", "/Applications/DaVinci Resolve/DaVinci Resolve.app"])
+        XCTAssertEqual(
+            PackageReceipts.applicationPaths(bomOutput: Data(".\n./Contents\n".utf8), installPrefix: "Applications/FL Cloud Plugins.app"),
+            ["/Applications/FL Cloud Plugins.app"])
     }
 
     func testReceiptsSkipApplePackagesAndMapAppsToPackages() throws {
         let system = try FakeSystem()
         for (identifier, stem) in [("audio.vital.synth", "vital-installer-record"), ("com.apple.pkg.Xcode", "com.apple.pkg.Xcode")] {
-            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": identifier, "InstallPrefixPath": "/"], format: .xml, options: 0).write(to: system.receipts.appending(path: "\(stem).plist"))
+            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": identifier, "InstallPrefixPath": "/"], format: .xml, options: 0).write(
+                to: system.receipts.appending(path: "\(stem).plist"))
             try system.write("", to: system.receipts.appending(path: "\(stem).bom"))
         }
         let lsbom = system.root.appending(path: "bin/lsbom")
-        try system.write("#!/bin/sh\ncase \"$3\" in *Xcode*) printf './Applications/Xcode.app\\n';; *) printf './Applications/Vital.app\\n';; esac\n", to: lsbom, executable: true)
+        try system.write(
+            "#!/bin/sh\ncase \"$3\" in *Xcode*) printf './Applications/Xcode.app\\n';; *) printf './Applications/Vital.app\\n';; esac\n", to: lsbom,
+            executable: true)
 
         let receipts = PackageReceipts.read(directory: system.receipts, lsbom: lsbom)
         XCTAssertEqual(receipts.packages(for: "/Applications/Vital.app"), ["audio.vital.synth"])
         XCTAssertEqual(receipts.packages(for: "/applications/vital.app"), ["audio.vital.synth"], "paths compare case-insensitively")
         XCTAssertEqual(receipts.packages(for: "/Applications/Xcode.app"), [], "Apple's packages are skipped")
-        XCTAssertEqual(receipts.files(for: "audio.vital.synth"), PackageReceipts.Files(plist: system.receipts.appending(path: "vital-installer-record.plist").path, bom: system.receipts.appending(path: "vital-installer-record.bom").path))
+        XCTAssertEqual(
+            receipts.files(for: "audio.vital.synth"),
+            PackageReceipts.Files(
+                plist: system.receipts.appending(path: "vital-installer-record.plist").path,
+                bom: system.receipts.appending(path: "vital-installer-record.bom").path))
     }
 
     func testBrokenReceiptBOMMakesTheReceiptIndexIncomplete() throws {
@@ -226,8 +253,10 @@ final class SourceTests: XCTestCase {
     func testDuplicateReceiptIdentifierMakesTheIndexIncomplete() throws {
         let system = try FakeSystem()
         for stem in ["first-record", "second-record"] {
-            try PropertyListSerialization.data(fromPropertyList: ["PackageIdentifier": "com.example.duplicate", "InstallPrefixPath": "/"], format: .xml, options: 0)
-                .write(to: system.receipts.appending(path: "\(stem).plist"))
+            try PropertyListSerialization.data(
+                fromPropertyList: ["PackageIdentifier": "com.example.duplicate", "InstallPrefixPath": "/"], format: .xml, options: 0
+            )
+            .write(to: system.receipts.appending(path: "\(stem).plist"))
             try system.write("bom", to: system.receipts.appending(path: "\(stem).bom"))
         }
         let lsbom = system.root.appending(path: "bin/lsbom")
@@ -236,12 +265,17 @@ final class SourceTests: XCTestCase {
         let scan = PackageReceipts.scan(directory: system.receipts, lsbom: lsbom)
         XCTAssertFalse(scan.complete)
         XCTAssertNil(scan.receipts.files(for: "com.example.duplicate"))
-        XCTAssertTrue(scan.warnings.contains { $0.contains("multiple files") && $0.contains("first-record.plist") && $0.contains("second-record.plist") }, "\(scan.warnings)")
+        XCTAssertTrue(
+            scan.warnings.contains { $0.contains("multiple files") && $0.contains("first-record.plist") && $0.contains("second-record.plist") },
+            "\(scan.warnings)")
     }
 
     func testSourcePriority() {
-        let cask = InstalledCask(token: "raycast", prefix: "/opt/homebrew", version: nil, appPaths: ["/Applications/Raycast.app"], suitePaths: [], packagePatterns: ["org.pqrs.*"])
-        let receipts = PackageReceipts(packagesByApplication: ["/applications/karabiner-elements.app": ["org.pqrs.Karabiner-Elements"], "/applications/vital.app": ["audio.vital.synth"]])
+        let cask = InstalledCask(
+            token: "raycast", prefix: "/opt/homebrew", version: nil, appPaths: ["/Applications/Raycast.app"], suitePaths: [], packagePatterns: ["org.pqrs.*"])
+        let receipts = PackageReceipts(packagesByApplication: [
+            "/applications/karabiner-elements.app": ["org.pqrs.Karabiner-Elements"], "/applications/vital.app": ["audio.vital.synth"]
+        ])
         func source(_ application: InstalledApp) -> AppSource { Inventory.source(of: application, casks: [cask], receipts: receipts) }
 
         XCTAssertEqual(source(app("Raycast")), .homebrew(token: "raycast", declared: true))
@@ -265,7 +299,8 @@ final class SourceTests: XCTestCase {
         try system.makeApp("GIMP.app", metadata: ["CFBundleIdentifier": "org.gimp.gimp-3.2"])
         try system.makeApp("AltTab.app", metadata: ["CFBundleIdentifier": "com.lwouis.alt-tab-macos"])
         try system.write(String(repeating: "x", count: 10_000), to: system.applications.appending(path: "AltTab.app/Contents/MacOS/AltTab"))
-        try system.writeJSON(["uninstall_artifacts": [["app": ["GIMP.app"]]]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/INSTALL_RECEIPT.json"))
+        try system.writeJSON(
+            ["uninstall_artifacts": [["app": ["GIMP.app"]]]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/INSTALL_RECEIPT.json"))
         try system.writeJSON(["default": ["appdir": system.applications.path]], to: system.homebrew.appending(path: "Caskroom/gimp/.metadata/config.json"))
 
         let inventory = Inventory.load(roots: system.roots)
@@ -292,7 +327,7 @@ final class MatcherTests: XCTestCase {
         app("Safari", id: "com.apple.Safari", classification: .system),
         app("Watchdog", id: "dev.watchdog", path: "/Users/tester/Projects/watchdog/dist/Watchdog.app", classification: .auxiliary),
         app("Watchdog", id: "dev.watchdog"),
-        app("Settings Helper", id: "com.example.settingshelper", path: "/Library/Application Support/Example/Settings Helper.app", classification: .auxiliary),
+        app("Settings Helper", id: "com.example.settingshelper", path: "/Library/Application Support/Example/Settings Helper.app", classification: .auxiliary)
     ]
 
     func name(_ result: MatchResult) -> String? {
@@ -304,7 +339,9 @@ final class MatcherTests: XCTestCase {
         XCTAssertEqual(name(AppMatcher.match("raycast", in: applications, home: home)), "/Applications/Raycast.app")
         XCTAssertEqual(name(AppMatcher.match("Raycast.app", in: applications, home: home)), "/Applications/Raycast.app")
         XCTAssertEqual(name(AppMatcher.match("COM.RAYCAST.MACOS", in: applications, home: home)), "/Applications/Raycast.app")
-        XCTAssertEqual(name(AppMatcher.match("code", in: applications, home: home)), "/Applications/Visual Studio Code.app", "an exact alternate name beats the Codex prefix")
+        XCTAssertEqual(
+            name(AppMatcher.match("code", in: applications, home: home)), "/Applications/Visual Studio Code.app",
+            "an exact alternate name beats the Codex prefix")
         XCTAssertEqual(name(AppMatcher.match("safari", in: applications, home: home)), "/Applications/Safari.app", "found, so the caller can refuse it by name")
     }
 
@@ -322,9 +359,12 @@ final class MatcherTests: XCTestCase {
 
     /// Without the question (-y), a prefix never picks the app.
     func testPrefixesAreRefusedWhenThereIsNoQuestion() {
-        guard case let .prefixOnly(application) = AppMatcher.match("ray", in: applications, home: home, allowPrefix: false) else { return XCTFail("expected a refused prefix") }
+        guard case let .prefixOnly(application) = AppMatcher.match("ray", in: applications, home: home, allowPrefix: false) else {
+            return XCTFail("expected a refused prefix")
+        }
         XCTAssertEqual(application.name, "Raycast")
-        XCTAssertEqual(name(AppMatcher.match("raycast", in: applications, home: home, allowPrefix: false)), "/Applications/Raycast.app", "the full name still works")
+        XCTAssertEqual(
+            name(AppMatcher.match("raycast", in: applications, home: home, allowPrefix: false)), "/Applications/Raycast.app", "the full name still works")
         XCTAssertEqual(name(AppMatcher.match("com.raycast.macos", in: applications, home: home, allowPrefix: false)), "/Applications/Raycast.app")
         guard case .ambiguous = AppMatcher.match("co", in: applications, home: home, allowPrefix: false) else { return XCTFail("ambiguity is still reported") }
     }
@@ -334,7 +374,9 @@ final class MatcherTests: XCTestCase {
         guard case let .ambiguous(candidates) = AppMatcher.match("notes pro", in: twins, home: home) else { return XCTFail("expected ambiguity") }
         XCTAssertEqual(candidates.count, 2)
         guard case .ambiguous = AppMatcher.match("com.example.notes", in: twins, home: home) else { return XCTFail("the identifier is shared too") }
-        XCTAssertEqual(name(AppMatcher.match("/Users/tester/Applications/Notes Pro.app", in: twins, home: home)), "/Users/tester/Applications/Notes Pro.app", "a path settles it")
+        XCTAssertEqual(
+            name(AppMatcher.match("/Users/tester/Applications/Notes Pro.app", in: twins, home: home)), "/Users/tester/Applications/Notes Pro.app",
+            "a path settles it")
     }
 
     func testWhitespaceIsTrimmedAndIdentifiersNeedTheWholeIdentifier() {
@@ -347,10 +389,14 @@ final class MatcherTests: XCTestCase {
     func testPaths() throws {
         let system = try FakeSystem()
         let url = try system.makeApp("Loose.app", in: system.home.appending(path: "Downloads"), metadata: ["CFBundleIdentifier": "com.example.loose"])
-        guard case let .found(application) = AppMatcher.match("~/Downloads/Loose.app", in: [], home: system.home) else { return XCTFail("a bundle outside the scan is read directly") }
+        guard case let .found(application) = AppMatcher.match("~/Downloads/Loose.app", in: [], home: system.home) else {
+            return XCTFail("a bundle outside the scan is read directly")
+        }
         XCTAssertEqual(application.path, url.standardizedFileURL.path)
         XCTAssertEqual(application.bundleIdentifier, "com.example.loose")
         XCTAssertEqual(application.classification, .auxiliary)
-        guard case .notFound = AppMatcher.match(system.home.appending(path: "Downloads").path, in: [], home: system.home) else { return XCTFail("a folder isn't an app") }
+        guard case .notFound = AppMatcher.match(system.home.appending(path: "Downloads").path, in: [], home: system.home) else {
+            return XCTFail("a folder isn't an app")
+        }
     }
 }

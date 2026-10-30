@@ -30,7 +30,7 @@ final class RuleTests: XCTestCase {
             "Library/Logs/com.example.app",
             "Library/Input Methods/com.example.app.app",
             "Library/Receipts/com.example.app.bom",
-            "Library/Receipts/com.example.app.plist",
+            "Library/Receipts/com.example.app.plist"
         ]
         for path in expected { try system.touch(path.hasSuffix(".plist") || path.hasSuffix(".bom") ? path : path + "/") }
         // Look-alikes that aren't the app's.
@@ -71,7 +71,7 @@ final class RuleTests: XCTestCase {
             "\(support)/Arc/User Data/NativeMessagingHosts/com.example.browser.json",
             "\(support)/Mozilla/NativeMessagingHosts/com.example.browser.json",
             "Library/Google/Chrome/NativeMessagingHosts/com.example.browser.json",
-            "Library/Application Support/Mozilla/NativeMessagingHosts/com.example.browser.json",
+            "Library/Application Support/Mozilla/NativeMessagingHosts/com.example.browser.json"
         ]
         for path in ours { try system.writeJSON(["name": "com.example.browser", "path": proxy, "type": "stdio"], to: system.root.appending(path: path)) }
         let hosts = system.root.appending(path: "\(support)/Google/Chrome/NativeMessagingHosts")
@@ -102,9 +102,14 @@ final class RuleTests: XCTestCase {
 
         let plan = try system.plan("Example")
         let exact = relative(plan.findings, system, tier: .exact)
-        XCTAssertTrue(exact.isSuperset(of: ["\(lib)/Group Containers/group.com.example.app", "\(lib)/Group Containers/abcde12345.com.example.own", "\(lib)/Application Scripts/group.com.example.app"]), "\(exact)")
+        XCTAssertTrue(
+            exact.isSuperset(of: [
+                "\(lib)/Group Containers/group.com.example.app", "\(lib)/Group Containers/abcde12345.com.example.own",
+                "\(lib)/Application Scripts/group.com.example.app"
+            ]), "\(exact)")
         XCTAssertFalse(exact.contains { $0.contains("shared") || $0.contains("unrelated") }, "\(exact)")
-        XCTAssertTrue(plan.skipped.contains { $0.path.hasSuffix("ABCDE12345.com.example.shared") && $0.reason == "app group shared with Other" }, "\(plan.skipped)")
+        XCTAssertTrue(
+            plan.skipped.contains { $0.path.hasSuffix("ABCDE12345.com.example.shared") && $0.reason == "app group shared with Other" }, "\(plan.skipped)")
     }
 
     func testCrashReporterAndSentryNameEvidence() throws {
@@ -116,7 +121,9 @@ final class RuleTests: XCTestCase {
         try system.touch("\(lib)/Application Support/CrashReporter/ExampleOther_00000000-1111-2222-3333-444444444444.plist")
 
         let plan = try system.plan("Example")
-        XCTAssertEqual(relative(plan.findings, system, tier: .name), ["\(lib)/Caches/SentryCrash/Example", "\(lib)/Application Support/CrashReporter/Example_00000000-1111-2222-3333-444444444444.plist"])
+        XCTAssertEqual(
+            relative(plan.findings, system, tier: .name),
+            ["\(lib)/Caches/SentryCrash/Example", "\(lib)/Application Support/CrashReporter/Example_00000000-1111-2222-3333-444444444444.plist"])
         XCTAssertTrue(plan.selected().contains { $0.tier == .name })
     }
 
@@ -154,9 +161,13 @@ final class RuleTests: XCTestCase {
         let system = try FakeSystem()
         _ = try makeExample(system)
         try system.touch("Users/tester/Library/Caches/com.plausiblelabs.crashreporter.data/com.example.app/")
-        try system.touch("Users/tester/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.example.app.sfl4")
+        try system.touch(
+            "Users/tester/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/com.example.app.sfl4")
         let paths = try system.plan("Example").findings.map(\.path)
-        for folder in ["Caches/com.plausiblelabs.crashreporter.data", "Application Support/com.apple.sharedfilelist", "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"] {
+        for folder in [
+            "Caches/com.plausiblelabs.crashreporter.data", "Application Support/com.apple.sharedfilelist",
+            "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments"
+        ] {
             XCTAssertFalse(paths.contains(system.userLibrary.appending(path: folder).path), folder)
         }
     }
@@ -170,8 +181,10 @@ final class RuleTests: XCTestCase {
         try system.write("bin", to: other.appending(path: "Contents/MacOS/other"))
         let bins = [system.root.appending(path: "usr/local/bin"), system.homebrew.appending(path: "bin"), system.home.appending(path: ".local/bin")]
         for folder in bins { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
-        try FileManager.default.createSymbolicLink(at: bins[0].appending(path: "example"), withDestinationURL: bundle.appending(path: "Contents/MacOS/example-cli"))
-        try FileManager.default.createSymbolicLink(at: bins[1].appending(path: "example2"), withDestinationURL: bundle.appending(path: "Contents/MacOS/example-cli"))
+        try FileManager.default.createSymbolicLink(
+            at: bins[0].appending(path: "example"), withDestinationURL: bundle.appending(path: "Contents/MacOS/example-cli"))
+        try FileManager.default.createSymbolicLink(
+            at: bins[1].appending(path: "example2"), withDestinationURL: bundle.appending(path: "Contents/MacOS/example-cli"))
         try FileManager.default.createSymbolicLink(at: bins[2].appending(path: "chain"), withDestinationURL: bins[0].appending(path: "example"))
         try FileManager.default.createSymbolicLink(at: bins[0].appending(path: "other"), withDestinationURL: other.appending(path: "Contents/MacOS/other"))
         try FileManager.default.createSymbolicLink(at: bins[0].appending(path: "dangling"), withDestinationURL: system.root.appending(path: "gone"))
@@ -179,8 +192,11 @@ final class RuleTests: XCTestCase {
         try system.write("bin", to: bins[2].appending(path: "Example"), executable: true)
 
         let plan = try system.plan("Example")
-        XCTAssertEqual(Set(plan.findings.filter { $0.reason == "command-line link into the app" }.map { URL(filePath: $0.path).lastPathComponent }), ["example", "example2", "chain"])
-        XCTAssertEqual(plan.findings.filter { $0.reason == "command-line executable named after the app" }.map(\.path), [bins[2].appending(path: "Example").path])
+        XCTAssertEqual(
+            Set(plan.findings.filter { $0.reason == "command-line link into the app" }.map { URL(filePath: $0.path).lastPathComponent }),
+            ["example", "example2", "chain"])
+        XCTAssertEqual(
+            plan.findings.filter { $0.reason == "command-line executable named after the app" }.map(\.path), [bins[2].appending(path: "Example").path])
         let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home)
             .run(plan, targets: Executor.targets(for: plan.selected()), isRoot: false, casks: [])
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
@@ -197,11 +213,14 @@ final class RuleTests: XCTestCase {
         let lib = system.userLibrary
         try system.makeApp("ExamplePreview.qlgenerator", in: lib.appending(path: "QuickLook"), metadata: ["CFBundleIdentifier": "com.example.app.quicklook"])
         try system.makeApp("Example.saver", in: lib.appending(path: "Screen Savers"), metadata: ["CFBundleIdentifier": "com.example.app.saver"])
-        try system.makeApp("Example Audio.driver", in: system.library.appending(path: "Audio/Plug-Ins/HAL"), metadata: ["CFBundleIdentifier": "com.example.app.driver"])
+        try system.makeApp(
+            "Example Audio.driver", in: system.library.appending(path: "Audio/Plug-Ins/HAL"), metadata: ["CFBundleIdentifier": "com.example.app.driver"])
         try system.makeApp("Example.prefPane", in: system.library.appending(path: "PreferencePanes"), metadata: ["CFBundleIdentifier": "net.thirdparty.pane"])
-        try system.makeApp("Example.component", in: system.library.appending(path: "Audio/Plug-Ins/Components"), metadata: ["CFBundleIdentifier": "com.other.app.component"])
+        try system.makeApp(
+            "Example.component", in: system.library.appending(path: "Audio/Plug-Ins/Components"), metadata: ["CFBundleIdentifier": "com.other.app.component"])
         try system.makeApp("Unrelated.qlgenerator", in: lib.appending(path: "QuickLook"), metadata: ["CFBundleIdentifier": "com.unrelated.ql"])
-        try FileManager.default.createSymbolicLink(at: lib.appending(path: "QuickLook/Linked.qlgenerator"), withDestinationURL: lib.appending(path: "QuickLook/ExamplePreview.qlgenerator"))
+        try FileManager.default.createSymbolicLink(
+            at: lib.appending(path: "QuickLook/Linked.qlgenerator"), withDestinationURL: lib.appending(path: "QuickLook/ExamplePreview.qlgenerator"))
 
         let plan = try system.plan("Example")
         let byName = Dictionary(plan.findings.map { (URL(filePath: $0.path).lastPathComponent, $0) }, uniquingKeysWith: { first, _ in first })
@@ -220,30 +239,41 @@ final class RuleTests: XCTestCase {
         let system = try FakeSystem()
         _ = try makeExample(system)
         let lib = "Users/tester/Library"
-        let expected = ["\(lib)/Caches/com.apple.helpd/Generated/com.example.app.help*1.2", "\(lib)/Caches/com.apple.nsurlsessiond/Downloads/com.example.app",
-                        "\(lib)/WebKit/Databases/___IndexedDB/com.example.app", "\(lib)/Preferences/com.apple.FileProvider/com.example.app.Share"]
+        let expected = [
+            "\(lib)/Caches/com.apple.helpd/Generated/com.example.app.help*1.2", "\(lib)/Caches/com.apple.nsurlsessiond/Downloads/com.example.app",
+            "\(lib)/WebKit/Databases/___IndexedDB/com.example.app", "\(lib)/Preferences/com.apple.FileProvider/com.example.app.Share"
+        ]
         for path in expected { try system.touch(path + "/") }
         try system.touch("\(lib)/Caches/com.apple.helpd/Generated/com.other.help*1.0/")
         let exact = relative(try system.plan("Example").findings, system, tier: .exact)
         XCTAssertTrue(exact.isSuperset(of: expected), "\(exact)")
         XCTAssertFalse(exact.contains { $0.contains("com.other") })
-        for folder in ["Caches/com.apple.helpd", "Caches/com.apple.helpd/Generated", "Preferences/com.apple.FileProvider", "Audio/Plug-Ins/HAL", "CoreMediaIO/Plug-Ins/DAL"] {
+        for folder in [
+            "Caches/com.apple.helpd", "Caches/com.apple.helpd/Generated", "Preferences/com.apple.FileProvider", "Audio/Plug-Ins/HAL", "CoreMediaIO/Plug-Ins/DAL"
+        ] {
             XCTAssertTrue(Protection.isProtected(system.userLibrary.appending(path: folder).path, roots: system.roots), folder)
         }
-        XCTAssertFalse(Protection.isProtected(system.userLibrary.appending(path: "Caches/com.apple.dt.Xcode").path, roots: system.roots), "a removable Apple app's own caches")
+        XCTAssertFalse(
+            Protection.isProtected(system.userLibrary.appending(path: "Caches/com.apple.dt.Xcode").path, roots: system.roots),
+            "a removable Apple app's own caches")
     }
 
     func testXDGSystemSharedAndHelpNameEvidence() throws {
         let system = try FakeSystem()
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app", "CFBundleExecutable": "Example"])
-        let paths = ["Users/tester/.example/", "Users/tester/Example/", "Users/tester/.local/share/example/", "Users/tester/.cache/Example/", "Users/tester/.local/state/example/", "Library/Application Support/Example/",
-                      "Library/Logs/Example 2/", "Users/Shared/Example/", "Users/tester/Library/Caches/com.apple.helpd/Generated/Example Help*1.0/",
-                      "Library/Logs/DiagnosticReports/Example_2026-10-26-101010_mac.diag"]
+        let paths = [
+            "Users/tester/.example/", "Users/tester/Example/", "Users/tester/.local/share/example/", "Users/tester/.cache/Example/",
+            "Users/tester/.local/state/example/", "Library/Application Support/Example/",
+            "Library/Logs/Example 2/", "Users/Shared/Example/", "Users/tester/Library/Caches/com.apple.helpd/Generated/Example Help*1.0/",
+            "Library/Logs/DiagnosticReports/Example_2026-10-26-101010_mac.diag"
+        ]
         for path in paths { try system.touch(path) }
         try system.touch("Users/tester/.local/share/other/")
         let plan = try system.plan("Example")
         XCTAssertEqual(relative(plan.findings, system, tier: .name), Set(paths.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }))
-        XCTAssertEqual(Set(plan.selected().filter { $0.tier == .name }.map(\.path)), Set(plan.findings.filter { $0.tier == .name }.map(\.path)), "every displayed name finding is selected")
+        XCTAssertEqual(
+            Set(plan.selected().filter { $0.tier == .name }.map(\.path)), Set(plan.findings.filter { $0.tier == .name }.map(\.path)),
+            "every displayed name finding is selected")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/Shared/Example") }?.reason, "named after the app, shared by all users")
         XCTAssertEqual(plan.findings.first { $0.path.hasSuffix("Users/tester/Example") }?.reason, "named after the app; may hold your own files")
         for folder in [".local/share", ".local/state", ".local/bin", ".cache", "bin"] {
@@ -259,14 +289,23 @@ final class RuleTests: XCTestCase {
         try system.makeApp("Brave Browser.app", metadata: ["CFBundleIdentifier": "com.brave.Browser"])
         try system.makeApp("Google Drive.app", metadata: ["CFBundleIdentifier": "com.google.drivefs"])
         let support = "Users/tester/Library/Application Support"
-        for path in ["\(support)/JetBrains/IntelliJIdea2026.2/", "\(support)/JetBrains/IntelliJIdea2025.3/", "\(support)/JetBrains/PyCharm2026.1/", "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2/",
-                     "\(support)/Google/Chrome/", "\(support)/Google/Drive/", "\(support)/Google/Chrome Canary/", "\(support)/BraveSoftware/Brave-Browser/", "\(support)/BraveSoftware/Brave-Origin/",
-                     "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2/"] {
+        for path in [
+            "\(support)/JetBrains/IntelliJIdea2026.2/", "\(support)/JetBrains/IntelliJIdea2025.3/", "\(support)/JetBrains/PyCharm2026.1/",
+            "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2/",
+            "\(support)/Google/Chrome/", "\(support)/Google/Drive/", "\(support)/Google/Chrome Canary/", "\(support)/BraveSoftware/Brave-Browser/",
+            "\(support)/BraveSoftware/Brave-Origin/",
+            "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2/"
+        ] {
             try system.touch(path)
         }
         func names(_ app: String) throws -> Set<String> { relative(try system.plan(app).findings, system, tier: .name) }
-        XCTAssertEqual(try names("IntelliJ IDEA"), ["\(support)/JetBrains/IntelliJIdea2026.2", "\(support)/JetBrains/IntelliJIdea2025.3", "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2",
-                                                     "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2"])
+        XCTAssertEqual(
+            try names("IntelliJ IDEA"),
+            [
+                "\(support)/JetBrains/IntelliJIdea2026.2", "\(support)/JetBrains/IntelliJIdea2025.3",
+                "Users/tester/Library/Caches/JetBrains/IntelliJIdea2026.2",
+                "Users/tester/Library/Logs/JetBrains/IntelliJIdea2026.2"
+            ])
         XCTAssertEqual(try names("Google Chrome"), ["\(support)/Google/Chrome"], "not Chrome Canary, not Drive, never Google itself")
         XCTAssertEqual(try names("Google Drive"), ["\(support)/Google/Drive"])
         XCTAssertEqual(try names("Brave Browser"), ["\(support)/BraveSoftware/Brave-Browser"])
@@ -285,8 +324,9 @@ final class RuleTests: XCTestCase {
         try system.touch("Users/tester/Library/Mobile Documents/iCloud~com~other~app/")
         try system.touch("Users/tester/Library/CloudStorage/Example-Personal/file")
         try system.touch("Users/tester/Library/CloudStorage/Dropbox/file")
-        try system.writePlist(["persistent-apps": [["tile-data": ["file-data": ["_CFURLString": bundle.absoluteString, "_CFURLStringType": 15]]]]],
-                              to: system.userLibrary.appending(path: "Preferences/com.apple.dock.plist"))
+        try system.writePlist(
+            ["persistent-apps": [["tile-data": ["file-data": ["_CFURLString": bundle.absoluteString, "_CFURLStringType": 15]]]]],
+            to: system.userLibrary.appending(path: "Preferences/com.apple.dock.plist"))
         try system.makeApp("ExampleDriver.kext", in: system.library.appending(path: "Extensions"), metadata: ["CFBundleIdentifier": "com.example.app.driver"])
         try system.makeApp("Example.driver", in: system.library.appending(path: "Audio/Plug-Ins/HAL"), metadata: ["CFBundleIdentifier": "com.example.app.hal"])
 
@@ -310,7 +350,8 @@ final class RuleTests: XCTestCase {
         let system = try FakeSystem()
         for app in ["Microsoft Word", "Microsoft Excel"] {
             try system.makeApp("\(app).app", metadata: ["CFBundleIdentifier": app == "Microsoft Word" ? "com.microsoft.Word" : "com.microsoft.Excel"])
-            try system.makeApp("\(app).app/Contents/SharedSupport/Microsoft Error Reporting.app", metadata: ["CFBundleIdentifier": "com.microsoft.errorreporting"])
+            try system.makeApp(
+                "\(app).app/Contents/SharedSupport/Microsoft Error Reporting.app", metadata: ["CFBundleIdentifier": "com.microsoft.errorreporting"])
         }
         // Spotlight finds it in /Library/Application Support/Microsoft/MAU2.0; the fake scan looks in Applications.
         try system.makeApp("Microsoft AutoUpdate.app", metadata: ["CFBundleIdentifier": "com.microsoft.autoupdate2"])
@@ -351,12 +392,18 @@ final class RuleTests: XCTestCase {
         try system.makeApp("Adobe Photoshop 2026/Adobe Photoshop 2026.app", metadata: ["CFBundleIdentifier": "com.adobe.Photoshop"])
         try system.makeApp("Adobe Illustrator 2026/Adobe Illustrator.app", metadata: ["CFBundleIdentifier": "com.adobe.illustrator"])
         let lib = "Users/tester/Library"
-        for path in ["\(lib)/Preferences/Adobe Photoshop 2026 Settings/", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026/", "\(lib)/Caches/Adobe/Photoshop/",
-                     "\(lib)/Application Support/Adobe/Illustrator 2026/", "\(lib)/Application Support/Adobe/CoreSync/"] {
+        for path in [
+            "\(lib)/Preferences/Adobe Photoshop 2026 Settings/", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026/", "\(lib)/Caches/Adobe/Photoshop/",
+            "\(lib)/Application Support/Adobe/Illustrator 2026/", "\(lib)/Application Support/Adobe/CoreSync/"
+        ] {
             try system.touch(path)
         }
         let names = relative(try system.plan("Adobe Photoshop 2026").findings, system, tier: .name)
-        XCTAssertEqual(names, ["\(lib)/Preferences/Adobe Photoshop 2026 Settings", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026", "\(lib)/Caches/Adobe/Photoshop"], "\(names)")
-        XCTAssertTrue(Protection.isProtected(system.userLibrary.appending(path: "Application Support/Adobe").path, roots: system.roots), "never Adobe's own folder")
+        XCTAssertEqual(
+            names,
+            ["\(lib)/Preferences/Adobe Photoshop 2026 Settings", "\(lib)/Application Support/Adobe/Adobe Photoshop 2026", "\(lib)/Caches/Adobe/Photoshop"],
+            "\(names)")
+        XCTAssertTrue(
+            Protection.isProtected(system.userLibrary.appending(path: "Application Support/Adobe").path, roots: system.roots), "never Adobe's own folder")
     }
 }

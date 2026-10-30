@@ -13,8 +13,11 @@ final class RobustnessTests: XCTestCase {
         let roots = system.roots
         for finding in plan.selected() where !plan.isOwn(finding) {
             XCTAssertFalse(Protection.isProtected(finding.path, roots: roots), "protected: \(finding.path)", file: file, line: line)
-            XCTAssertFalse(system.home.path.hasPrefix(finding.path + "/") || finding.path == system.home.path, "contains home: \(finding.path)", file: file, line: line)
-            XCTAssertFalse(Remover.isNeverDeletable(String(finding.path.dropFirst(system.root.path.count)), home: system.home, root: system.root.path), "never deletable: \(finding.path)", file: file, line: line)
+            XCTAssertFalse(
+                system.home.path.hasPrefix(finding.path + "/") || finding.path == system.home.path, "contains home: \(finding.path)", file: file, line: line)
+            XCTAssertFalse(
+                Remover.isNeverDeletable(String(finding.path.dropFirst(system.root.path.count)), home: system.home, root: system.root.path),
+                "never deletable: \(finding.path)", file: file, line: line)
         }
     }
 
@@ -28,19 +31,32 @@ final class RobustnessTests: XCTestCase {
     /// A zap list is the cask maintainers' data. Broad patterns must not sweep up everything.
     func testHostileZapListsSelectNothingBroad() throws {
         let system = try FakeSystem()
-        for folder in ["Users/tester/Library/Application Support/com.other.app/", "Users/tester/Library/Application Support/Precious/", "Users/tester/Library/Preferences/com.other.app.plist",
-                       "Users/tester/Documents/thesis.txt", "Users/tester/Library/Caches/com.other.cache/", "Users/tester/.ssh/id_ed25519", "Users/tester/Library/Application Support/com.example.app/data"] {
+        for folder in [
+            "Users/tester/Library/Application Support/com.other.app/", "Users/tester/Library/Application Support/Precious/",
+            "Users/tester/Library/Preferences/com.other.app.plist",
+            "Users/tester/Documents/thesis.txt", "Users/tester/Library/Caches/com.other.cache/", "Users/tester/.ssh/id_ed25519",
+            "Users/tester/Library/Application Support/com.example.app/data"
+        ] {
             try system.touch(folder)
         }
         try system.makeApp("Other.app", metadata: ["CFBundleIdentifier": "com.other.app"])
-        try makeCask(system, zap: ["trash": ["~", "~/", "~/Library", "~/Library/*", "~/Library/Application Support/*", "~/Library/Preferences/*.plist", "~/Library/Caches/*",
-                                             "/", "/Applications", "/Applications/*", "~/Documents", "~/Documents/*", "~/.ssh", "~/../../etc", "~/Library/Application Support/../../Documents",
-                                             "~/Library/Application Support/com.example.app"],
-                                   "delete": ["/Library", "/Library/*", "/usr", "~/Library/Application Support/?"]])
+        try makeCask(
+            system,
+            zap: [
+                "trash": [
+                    "~", "~/", "~/Library", "~/Library/*", "~/Library/Application Support/*", "~/Library/Preferences/*.plist", "~/Library/Caches/*",
+                    "/", "/Applications", "/Applications/*", "~/Documents", "~/Documents/*", "~/.ssh", "~/../../etc",
+                    "~/Library/Application Support/../../Documents",
+                    "~/Library/Application Support/com.example.app"
+                ],
+                "delete": ["/Library", "/Library/*", "/usr", "~/Library/Application Support/?"]
+            ])
         let plan = try system.plan("Example")
         assertSafe(plan, system)
         let paths = selectedPaths(plan).map { $0.replacingOccurrences(of: system.root.path + "/", with: "") }
-        XCTAssertEqual(Set(paths), ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app", "opt/homebrew/Caskroom/example"], "only the specific user data and cask payload survive")
+        XCTAssertEqual(
+            Set(paths), ["Applications/Example.app", "Users/tester/Library/Application Support/com.example.app", "opt/homebrew/Caskroom/example"],
+            "only the specific user data and cask payload survive")
     }
 
     /// An installer receipt listing system folders, the home folder or everything in /Library.
@@ -50,14 +66,17 @@ final class RobustnessTests: XCTestCase {
         try system.touch("Library/Application Support/Vendor Suite/data")
         try system.touch("Library/Fonts/Other.otf")
         try system.touch("Users/tester/notes.txt")
-        try system.writePlist(["PackageIdentifier": "com.vendor.pkg.suite", "InstallPrefixPath": system.root.path], to: system.receipts.appending(path: "com.vendor.pkg.suite.plist"))
+        try system.writePlist(
+            ["PackageIdentifier": "com.vendor.pkg.suite", "InstallPrefixPath": system.root.path],
+            to: system.receipts.appending(path: "com.vendor.pkg.suite.plist"))
         try system.write("", to: system.receipts.appending(path: "com.vendor.pkg.suite.bom"))
         try system.write("#!/bin/sh\nprintf 'pkgid: com.vendor.pkg.suite\\n'\n", to: system.tools.appending(path: "pkgutil"), executable: true)
-        try system.write("""
-        #!/bin/sh
-        case "$*" in *-d*) exit 0 ;; esac
-        printf '.\\n./Applications\\n./Applications/Suite.app\\n./Library\\n./Library/Application Support\\n./Library/Application Support/Vendor Suite\\n./Library/Fonts\\n./Library/LaunchDaemons\\n./Users\\n./Users/tester\\n./System\\n./System/Library\\n./usr\\n./usr/local\\n./usr/local/bin\\n./private/var\\n./Library/../Users/tester\\n'
-        """, to: system.tools.appending(path: "lsbom"), executable: true)
+        try system.write(
+            """
+            #!/bin/sh
+            case "$*" in *-d*) exit 0 ;; esac
+            printf '.\\n./Applications\\n./Applications/Suite.app\\n./Library\\n./Library/Application Support\\n./Library/Application Support/Vendor Suite\\n./Library/Fonts\\n./Library/LaunchDaemons\\n./Users\\n./Users/tester\\n./System\\n./System/Library\\n./usr\\n./usr/local\\n./usr/local/bin\\n./private/var\\n./Library/../Users/tester\\n'
+            """, to: system.tools.appending(path: "lsbom"), executable: true)
 
         let plan = try system.plan("Suite")
         assertSafe(plan, system)
@@ -73,8 +92,10 @@ final class RobustnessTests: XCTestCase {
         try system.touch("Library/PrivilegedHelperTools/other-helper")
         try system.touch("Library/Application Support/Shared Vendor/Other/thing")
         let agents = system.userLibrary.appending(path: "LaunchAgents")
-        let programs = ["/", system.library.appending(path: "PrivilegedHelperTools").path + "/", system.library.appending(path: "Application Support").path,
-                        system.library.appending(path: "Application Support/Shared Vendor").path, system.home.path, "relative/path", "../../etc/passwd"]
+        let programs = [
+            "/", system.library.appending(path: "PrivilegedHelperTools").path + "/", system.library.appending(path: "Application Support").path,
+            system.library.appending(path: "Application Support/Shared Vendor").path, system.home.path, "relative/path", "../../etc/passwd"
+        ]
         for (index, program) in programs.enumerated() {
             try system.writePlist(["Label": "com.example.app.job\(index)", "Program": program], to: agents.appending(path: "com.example.app.job\(index).plist"))
         }
@@ -82,7 +103,8 @@ final class RobustnessTests: XCTestCase {
         assertSafe(plan, system)
         XCTAssertEqual(plan.launchItems.count, programs.count, "the jobs are the app's by label")
         let paths = Set(selectedPaths(plan).map { $0.replacingOccurrences(of: system.root.path + "/", with: "") })
-        XCTAssertEqual(paths, Set(["Applications/Example.app"] + programs.indices.map { "Users/tester/Library/LaunchAgents/com.example.app.job\($0).plist" }), "\(paths)")
+        XCTAssertEqual(
+            paths, Set(["Applications/Example.app"] + programs.indices.map { "Users/tester/Library/LaunchAgents/com.example.app.job\($0).plist" }), "\(paths)")
     }
 
     /// A copy carrying an Apple app's identifier is refused outright: Safari's data is never in reach.
@@ -101,13 +123,21 @@ final class RobustnessTests: XCTestCase {
     }
 
     func testZapPatternsMustBeSpecific() {
-        for broad in ["~/Library/Caches/*", "~/Library/Preferences/*.plist", "*", "~/Library/Application Support/?", "~/Library/[a-z]*", "~/Library/Application Support/ab*/x",
-                      "~/Library/*/com.vendor.app", "~/Library/Logs/*.savedState", "~/Library/Preferences/Adobe/.[A-Z0-9]???????????", "/Library/Application Support/Adobe/SL*"] {
+        for broad in [
+            "~/Library/Caches/*", "~/Library/Preferences/*.plist", "*", "~/Library/Application Support/?", "~/Library/[a-z]*",
+            "~/Library/Application Support/ab*/x",
+            "~/Library/*/com.vendor.app", "~/Library/Logs/*.savedState", "~/Library/Preferences/Adobe/.[A-Z0-9]???????????",
+            "/Library/Application Support/Adobe/SL*"
+        ] {
             XCTAssertFalse(HomebrewZap.isSpecific(broad), broad)
         }
-        for specific in ["~/Library/Caches/com.vendor.app", "~/Library/Preferences/com.vendor.*", "~/Library/Application Support/Vendor*", "/Library/Logs/DiagnosticReports/Vendor_*.crash",
-                         "~/Library/Group Containers/*.com.adguard.mac", "~/Library/Preferences/*1password.plist", "~/Library/Caches/*.CodeEdit", "~/Library/Application Support/CrashReporter/Live_*.plist",
-                         "~/Library/Application Support/Arq *", "~/.claude.json*"] {
+        for specific in [
+            "~/Library/Caches/com.vendor.app", "~/Library/Preferences/com.vendor.*", "~/Library/Application Support/Vendor*",
+            "/Library/Logs/DiagnosticReports/Vendor_*.crash",
+            "~/Library/Group Containers/*.com.adguard.mac", "~/Library/Preferences/*1password.plist", "~/Library/Caches/*.CodeEdit",
+            "~/Library/Application Support/CrashReporter/Live_*.plist",
+            "~/Library/Application Support/Arq *", "~/.claude.json*"
+        ] {
             XCTAssertTrue(HomebrewZap.isSpecific(specific), specific)
         }
     }
@@ -132,11 +162,15 @@ final class RobustnessTests: XCTestCase {
         let system = try FakeSystem()
         try system.makeApp("Good.app", metadata: ["CFBundleIdentifier": "com.example.good"])
         try system.write("not a plist \u{0}\u{1}", to: system.applications.appending(path: "Garbage.app/Contents/Info.plist"))
-        try system.writePlist(["CFBundleIdentifier": ["an", "array"], "CFBundleName": 42, "CFBundleShortVersionString": ["1"]], to: system.applications.appending(path: "Typed.app/Contents/Info.plist"))
+        try system.writePlist(
+            ["CFBundleIdentifier": ["an", "array"], "CFBundleName": 42, "CFBundleShortVersionString": ["1"]],
+            to: system.applications.appending(path: "Typed.app/Contents/Info.plist"))
         try system.write(String(repeating: "x", count: 2_000_000), to: system.applications.appending(path: "Huge.app/Contents/Info.plist"))
         try FileManager.default.createDirectory(at: system.applications.appending(path: "Empty.app/Contents"), withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: system.applications.appending(path: "Loop.app"), withDestinationURL: system.applications.appending(path: "Loop.app"))
-        try FileManager.default.createSymbolicLink(at: system.applications.appending(path: "Dangling.app"), withDestinationURL: system.root.appending(path: "nowhere.app"))
+        try FileManager.default.createSymbolicLink(
+            at: system.applications.appending(path: "Loop.app"), withDestinationURL: system.applications.appending(path: "Loop.app"))
+        try FileManager.default.createSymbolicLink(
+            at: system.applications.appending(path: "Dangling.app"), withDestinationURL: system.root.appending(path: "nowhere.app"))
         try system.makeApp("Weird\nName\u{1B}[31m.app", metadata: ["CFBundleIdentifier": "com.example.weird"])
 
         let inventory = Inventory.load(roots: system.roots, sizes: false)
@@ -175,7 +209,8 @@ final class RobustnessTests: XCTestCase {
         let caches = system.userLibrary.appending(path: "Caches/com.example.app")
         try FileManager.default.removeItem(at: caches)
         try FileManager.default.createSymbolicLink(at: caches, withDestinationURL: system.home.appending(path: "Documents"))
-        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(plan, targets: targets, isRoot: false, casks: [])
+        let report = Executor(actions: RecordingSystemActions(), allowedRoot: system.root.path, home: system.home).run(
+            plan, targets: targets, isRoot: false, casks: [])
         XCTAssertTrue(report.failed.contains { $0.finding.path == caches.path && $0.reason.contains("changed") }, "\(report.failed)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: system.home.appending(path: "Documents/thesis.txt").path))
     }

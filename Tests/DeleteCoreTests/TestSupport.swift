@@ -21,7 +21,8 @@ final class FakeSystem {
     init() throws {
         // Resolved, because /var is a symlink to /private/var and the scan resolves paths.
         root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appending(path: "delete-test-\(UUID().uuidString)", directoryHint: .isDirectory)
-        for folder in [home, applications, systemApplications, receipts, homebrew.appending(path: "Caskroom"), library, userLibrary, userCache, userTemp, tools] {
+        for folder in [home, applications, systemApplications, receipts, homebrew.appending(path: "Caskroom"), library, userLibrary, userCache, userTemp, tools]
+        {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
         // Commands that report nothing unless a test says otherwise.
@@ -39,7 +40,9 @@ final class FakeSystem {
                 ApplicationRoot(url: applications, classification: .user, required: true),
                 ApplicationRoot(url: home.appending(path: "Applications"), classification: .user, required: false),
                 ApplicationRoot(url: systemApplications, classification: .system, required: true),
-                ApplicationRoot(url: home.appending(path: "Library/Application Support/Steam/steamapps/common"), classification: .user, required: false, maxDepth: 2, extensionlessBundles: true),
+                ApplicationRoot(
+                    url: home.appending(path: "Library/Application Support/Steam/steamapps/common"), classification: .user, required: false, maxDepth: 2,
+                    extensionlessBundles: true)
             ],
             homebrewPrefixes: [homebrew],
             receipts: receipts,
@@ -102,7 +105,9 @@ final class FakeSystem {
         let entitlements = root.appending(path: "entitlements-\(UUID().uuidString).plist")
         try writePlist(["com.apple.security.application-groups": applicationGroups], to: entitlements)
         defer { try? FileManager.default.removeItem(at: entitlements) }
-        let result = try CommandRunner().run(executable: URL(filePath: "/usr/bin/codesign"), arguments: ["-f", "-s", "-", "--entitlements", entitlements.path, bundle.path], environment: [:], timeout: 30, outputLimit: 65_536)
+        let result = try CommandRunner().run(
+            executable: URL(filePath: "/usr/bin/codesign"), arguments: ["-f", "-s", "-", "--entitlements", entitlements.path, bundle.path], environment: [:],
+            timeout: 30, outputLimit: 65_536)
         XCTAssertEqual(result.status, 0, String(decoding: result.stderr, as: UTF8.self))
     }
 
@@ -120,7 +125,9 @@ final class FakeSystem {
 
 func app(_ name: String, id: String? = nil, path: String? = nil, classification: AppClassification = .user, alternateNames: [String] = []) -> InstalledApp {
     let path = path ?? "/Applications/\(name).app"
-    return InstalledApp(path: path, bundlePath: path, name: name, bundleIdentifier: id, alternateNames: alternateNames, version: nil, executableName: nil, classification: classification, source: .download, size: nil, linkTargets: [], hasAppStoreReceipt: false, isIOSApp: false, isSteamShortcut: false)
+    return InstalledApp(
+        path: path, bundlePath: path, name: name, bundleIdentifier: id, alternateNames: alternateNames, version: nil, executableName: nil,
+        classification: classification, source: .download, size: nil, linkTargets: [], hasAppStoreReceipt: false, isIOSApp: false, isSteamShortcut: false)
 }
 
 /// The findings of one tier, as paths relative to the fake root.

@@ -68,12 +68,14 @@ final class CLITests: XCTestCase {
         var alt = app("AltTab", id: "com.lwouis.alt-tab-macos")
         alt.size = 12_000_000
         let text = ListRenderer.text([alt, raycast], home: URL(filePath: "/Users/tester"))
-        XCTAssertEqual(text, """
-        AltTab              12 MB   Download
-        Raycast   1.98.2   312 MB   Homebrew (raycast)
+        XCTAssertEqual(
+            text,
+            """
+            AltTab              12 MB   Download
+            Raycast   1.98.2   312 MB   Homebrew (raycast)
 
-        2 apps, 324 MB
-        """)
+            2 apps, 324 MB
+            """)
 
         let json = try JSONSerialization.jsonObject(with: Data(try ListRenderer.json([raycast], warnings: []).utf8)) as? [String: Any]
         let entry = try XCTUnwrap((json?["applications"] as? [[String: Any]])?.first)
@@ -96,17 +98,25 @@ final class CLITests: XCTestCase {
         try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app"])
         try system.touch("Users/tester/Library/Preferences/com.example.app.plist")
         try system.touch("Users/tester/Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json")
-        try system.writeJSON(["path": system.applications.appending(path: "Example.app/Contents/MacOS/proxy").path], to: system.home.appending(path: "Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json"))
+        try system.writeJSON(
+            ["path": system.applications.appending(path: "Example.app/Contents/MacOS/proxy").path],
+            to: system.home.appending(path: "Library/Application Support/Google/Chrome/NativeMessagingHosts/a-very-long-manifest-name-for-the-example-app.json")
+        )
         let plan = try system.plan("Example")
-        let rows = { (width: Int?) in PlanRenderer.text(plan, isRoot: false, home: system.home, width: width).split(separator: "\n").filter { $0.hasPrefix("  /") || $0.hasPrefix("  ~") } }
-        let sizeColumns = Set(rows(nil).map { row in row.range(of: " KB")?.lowerBound.utf16Offset(in: row) ?? row.range(of: " B")?.lowerBound.utf16Offset(in: row) ?? -1 })
+        let rows = { (width: Int?) in
+            PlanRenderer.text(plan, isRoot: false, home: system.home, width: width).split(separator: "\n").filter { $0.hasPrefix("  /") || $0.hasPrefix("  ~") }
+        }
+        let sizeColumns = Set(
+            rows(nil).map { row in row.range(of: " KB")?.lowerBound.utf16Offset(in: row) ?? row.range(of: " B")?.lowerBound.utf16Offset(in: row) ?? -1 })
         XCTAssertEqual(sizeColumns.count, 1, "aligned: \(rows(nil))")
         XCTAssertTrue(rows(60).contains { $0.count > 60 }, "a long path runs past a narrow terminal rather than being cut")
     }
 
     func testProtectedItemsSayWhyTheyStay() throws {
         let system = try FakeSystem()
-        XCTAssertTrue(Protection.protectedReason(system.home.appending(path: "Library/Application Support/Steam").path, roots: system.roots).hasPrefix("Steam's own folder"))
+        XCTAssertTrue(
+            Protection.protectedReason(system.home.appending(path: "Library/Application Support/Steam").path, roots: system.roots).hasPrefix(
+                "Steam's own folder"))
         XCTAssertEqual(Protection.protectedReason(system.home.appending(path: "Documents/Example").path, roots: system.roots), "in your documents")
         XCTAssertEqual(Protection.protectedReason(system.home.appending(path: "Library/Caches").path, roots: system.roots), "protected location")
     }

@@ -20,15 +20,16 @@ final class CompletionTests: XCTestCase {
             app("Falcon", id: "com.crowdstrike.falcon.App"),
             app("Helper", id: "com.example.helper", path: "/Library/Application Support/Example/Helper.app", classification: .auxiliary),
             app("Twin", id: "com.example.twin"),
-            app("Twin", id: "com.example.twin", path: "/Users/tester/Applications/Twin.app"),
+            app("Twin", id: "com.example.twin", path: "/Users/tester/Applications/Twin.app")
         ]
     }
 
     func values(_ word: String) -> [String] { Completion.candidates(for: word, applications: applications).map(\.value) }
 
     func testOffersOnlyAppsDeleteWouldAccept() {
-        XCTAssertEqual(values(""), ["FL Cloud Plugins", "FL Studio 2026", "Raycast", "Twin", "Visual Studio Code", "Xcode"],
-                       "macOS apps, security agents and helpers are never offered; removable Apple apps are")
+        XCTAssertEqual(
+            values(""), ["FL Cloud Plugins", "FL Studio 2026", "Raycast", "Twin", "Visual Studio Code", "Xcode"],
+            "macOS apps, security agents and helpers are never offered; removable Apple apps are")
     }
 
     func testPrefixesAlternateNamesAndCase() {
@@ -45,7 +46,8 @@ final class CompletionTests: XCTestCase {
     }
 
     func testIdentifiers() {
-        XCTAssertEqual(Completion.candidates(for: "com.image", applications: applications).map(\.value), ["com.image-line.fl-cloud-plugins", "com.image-line.flstudio"])
+        XCTAssertEqual(
+            Completion.candidates(for: "com.image", applications: applications).map(\.value), ["com.image-line.fl-cloud-plugins", "com.image-line.flstudio"])
         XCTAssertEqual(values("com.apple.m"), [], "never a macOS app's identifier")
     }
 
@@ -67,13 +69,16 @@ final class CompletionTests: XCTestCase {
 
     /// Each script parses in its own shell (checked without running it).
     func testScriptsParse() throws {
-        let checks: [(CompletionShell, String, [String])] = [(.fish, "/opt/homebrew/bin/fish", ["--no-execute"]), (.zsh, "/bin/zsh", ["-n"]), (.bash, "/bin/bash", ["-n"])]
+        let checks: [(CompletionShell, String, [String])] = [
+            (.fish, "/opt/homebrew/bin/fish", ["--no-execute"]), (.zsh, "/bin/zsh", ["-n"]), (.bash, "/bin/bash", ["-n"])
+        ]
         for (shell, executable, flags) in checks {
             guard FileManager.default.isExecutableFile(atPath: executable) else { continue }
             let file = FileManager.default.temporaryDirectory.appending(path: "delete-completion-\(UUID().uuidString).\(shell.rawValue)")
             try Completion.script(for: shell).write(to: file, atomically: true, encoding: .utf8)
             defer { try? FileManager.default.removeItem(at: file) }
-            let result = try CommandRunner().run(executable: URL(filePath: executable), arguments: flags + [file.path], environment: ["PATH": "/usr/bin:/bin"], timeout: 10, outputLimit: 65_536)
+            let result = try CommandRunner().run(
+                executable: URL(filePath: executable), arguments: flags + [file.path], environment: ["PATH": "/usr/bin:/bin"], timeout: 10, outputLimit: 65_536)
             XCTAssertEqual(result.status, 0, "\(shell): \(String(decoding: result.stderr, as: UTF8.self))")
         }
     }
