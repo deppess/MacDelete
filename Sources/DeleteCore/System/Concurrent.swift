@@ -20,7 +20,8 @@ final class Concurrent<Value: Sendable>: @unchecked Sendable {
 
     var value: Value {
         group.wait()
-        return result!
+        guard let result else { preconditionFailure("Concurrent work finished without a result.") }
+        return result
     }
 
     /// Waits for `work` without using its result.
@@ -47,5 +48,10 @@ final class UnsafeResults<Value>: @unchecked Sendable {
         set { storage[index] = newValue }
     }
 
-    var values: [Value] { storage.map { $0! } }
+    var values: [Value] {
+        storage.map { value in
+            guard let value else { preconditionFailure("Concurrent result slot was not filled.") }
+            return value
+        }
+    }
 }

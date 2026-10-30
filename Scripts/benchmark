@@ -1,0 +1,19 @@
+#!/bin/zsh
+# Measures the end-to-end installed-app inventory. It is informational, not a CI gate: the result
+# depends on Spotlight, installed applications, and local filesystem state.
+set -euo pipefail
+
+project=${0:A:h:h}
+iterations=${1:-5}
+[[ $iterations == <-> && $iterations -gt 0 ]] || {
+    print -u2 'Usage: Scripts/benchmark [positive-number-of-runs]'
+    exit 2
+}
+
+swift build -c release --package-path "$project" --product delete
+bin=$(swift build -c release --package-path "$project" --show-bin-path)/delete
+
+for run in {1..$iterations}; do
+    print -u2 "Run $run/$iterations"
+    /usr/bin/time -lp "$bin" list --json > /dev/null
+done

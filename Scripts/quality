@@ -1,0 +1,11 @@
+#!/bin/zsh
+# Runs every deterministic repository quality gate. This is the required check before a release.
+set -euo pipefail
+
+project=${0:A:h:h}
+cd "$project"
+
+swift test
+.claude/hooks/test-guard-delete.sh
+swift build -c release --product delete
+git diff --check

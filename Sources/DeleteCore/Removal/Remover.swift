@@ -128,7 +128,11 @@ public enum Remover {
             first = "\(inside.terminalInline): \(String(cString: strerror(code)))"
         }
         while let entry = fts_read(stream) {
-            let entryPath = entry.pointee.fts_path!
+            guard let entryPath = entry.pointee.fts_path else {
+                failures += 1
+                if first == nil { first = "unknown: traversal returned an entry without a path" }
+                continue
+            }
             switch Int32(entry.pointee.fts_info) {
             case FTS_D:
                 // `fts_open` happens after the confirmation-time lstat. Check the root again at

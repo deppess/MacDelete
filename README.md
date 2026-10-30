@@ -48,6 +48,9 @@ What is refused: apps that are part of macOS, security and device-management age
 ```sh
 swift build
 swift test                                 # fake system folders only; never touches the host
+Scripts/format                             # apply the repository Swift formatting policy
+Scripts/quality                            # test, safety, release-build and whitespace gates
+Scripts/benchmark                          # repeat live inventory timing (informational, local machine only)
 Scripts/install                            # native release build to ~/.local/bin/delete
 Scripts/sandbox clone "FL Studio 2026"     # APFS clones of everything the app's plan names
 Scripts/sandbox run "FL Studio 2026" -y    # really deletes the clones; system actions are only recorded
@@ -60,4 +63,5 @@ Scripts/testapps clean                     # then: remove the disposable-app bui
 ```
 
 GPL-3.0-or-later. See [`COPYING`](COPYING) for the license, [`NOTICE`](NOTICE) for code taken
-from Sift and Mole, and [`CHANGELOG.md`](CHANGELOG.md) for release history.
+from Sift and Mole, [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and safety rules, and
+[`CHANGELOG.md`](CHANGELOG.md) for release history.

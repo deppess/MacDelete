@@ -206,7 +206,14 @@ public enum DeleteCLI {
         let running = plans.filter(\.running)
         if !running.isEmpty {
             let names = running.map { $0.application.name.terminalInline }
-            let question = names.count == 1 ? "\(names[0]) is running. Quit it? [y/N] " : "\(names.dropLast().joined(separator: ", ")) and \(names.last!) are running. Quit them? [y/N] "
+            let question: String
+            if names.count == 1 {
+                question = "\(names[0]) is running. Quit it? [y/N] "
+            } else if let last = names.last {
+                question = "\(names.dropLast().joined(separator: ", ")) and \(last) are running. Quit them? [y/N] "
+            } else {
+                preconditionFailure("A non-empty running plan must have a name.")
+            }
             guard invocation.assumeYes || invocation.approved != nil || ask(question) else {
                 print("Nothing was deleted.")
                 return EXIT_FAILURE

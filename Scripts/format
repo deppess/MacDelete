@@ -1,0 +1,7 @@
+#!/bin/zsh
+# Applies the repository's Swift formatting policy. Run before committing Swift changes.
+set -euo pipefail
+
+project=${0:A:h:h}
+cd "$project"
+swift format format --in-place --parallel --recursive Sources Tests

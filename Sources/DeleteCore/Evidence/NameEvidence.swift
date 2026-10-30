@@ -147,7 +147,7 @@ extension EvidenceFinder {
             return products.contains { product in
                 guard lowered.hasPrefix(product) else { return false }
                 let rest = lowered.dropFirst(product.count).drop { $0 == " " || $0 == "-" || $0 == "_" }
-                return rest.allSatisfy { $0.isNumber || $0 == "." } && (rest.isEmpty || rest.first!.isNumber)
+                return rest.allSatisfy { $0.isNumber || $0 == "." } && (rest.first?.isNumber ?? true)
             }
         }
 
