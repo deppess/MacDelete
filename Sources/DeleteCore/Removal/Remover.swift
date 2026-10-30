@@ -16,8 +16,9 @@ public struct FileIdentity: Sendable, Equatable {
     public static func of(_ path: String) -> FileIdentity? {
         var info = stat()
         guard lstat(path, &info) == 0 else { return nil }
-        return FileIdentity(device: info.st_dev, inode: info.st_ino, type: info.st_mode & S_IFMT,
-                            owner: info.st_uid, group: info.st_gid, permissions: info.st_mode & 0o7777)
+        return FileIdentity(
+            device: info.st_dev, inode: info.st_ino, type: info.st_mode & S_IFMT,
+            owner: info.st_uid, group: info.st_gid, permissions: info.st_mode & 0o7777)
     }
 }
 
@@ -57,7 +58,9 @@ public enum Remover {
         // Lexically clean: absolute, no empty, "." or ".." components. (Not via Foundation, whose
         // standardizing rewrites /private/var to /var.)
         let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
-        guard path.hasPrefix("/"), path.count > 1, !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return .failure(.outsideAllowedRoot) }
+        guard path.hasPrefix("/"), path.count > 1, !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+            return .failure(.outsideAllowedRoot)
+        }
         let root = allowedRoot == "/" ? "" : allowedRoot
         guard root.isEmpty || path.hasPrefix(root + "/") else { return .failure(.outsideAllowedRoot) }
         guard !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root) else { return .failure(.neverDeletable) }
@@ -95,9 +98,11 @@ public enum Remover {
         let root = allowedRoot == "/" ? "" : allowedRoot
         let components = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
         guard path.hasPrefix("/"), !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
-              root.isEmpty || path.hasPrefix(root + "/"),
-              !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root) || isSteamSkeleton(String(path.dropFirst(root.count)), home: home, root: root),
-              !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased()) else { return .failure(.neverDeletable) }
+            root.isEmpty || path.hasPrefix(root + "/"),
+            !isNeverDeletable(String(path.dropFirst(root.count)), home: home, root: root)
+                || isSteamSkeleton(String(path.dropFirst(root.count)), home: home, root: root),
+            !Protection.standardLibraryFolders.contains(URL(filePath: path).lastPathComponent.lowercased())
+        else { return .failure(.neverDeletable) }
         guard let current = FileIdentity.of(path) else { return .failure(.missing) }
         guard current == target.identity else { return .failure(.changed) }
         guard current.type == S_IFDIR else { return .failure(.changed) }
@@ -115,7 +120,9 @@ public enum Remover {
         let copy = strdup(path)
         defer { free(copy) }
         var paths: [UnsafeMutablePointer<CChar>?] = [copy, nil]
-        guard let stream = fts_open(&paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else { return .failure(.incomplete(failures: 1, first: String(cString: strerror(errno)))) }
+        guard let stream = fts_open(&paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else {
+            return .failure(.incomplete(failures: 1, first: String(cString: strerror(errno))))
+        }
         defer { fts_close(stream) }
         var failures = 0
         var first: String?
@@ -163,8 +170,10 @@ public enum Remover {
         let fullHome = home.standardizedFileURL.path
         let homePath = (!root.isEmpty && fullHome.hasPrefix(root + "/") ? String(fullHome.dropFirst(root.count)) : fullHome).lowercased()
         if lowered.isEmpty || lowered == "/" { return true }
-        let neverInside = ["/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec", "/usr/share", "/private/var/db", "/library/apple", "/dev",
-                           homePath + "/documents", homePath + "/desktop", homePath + "/library/keychains", homePath + "/library/mobile documents"]
+        let neverInside = [
+            "/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec", "/usr/share", "/private/var/db", "/library/apple", "/dev",
+            homePath + "/documents", homePath + "/desktop", homePath + "/library/keychains", homePath + "/library/mobile documents"
+        ]
         if neverInside.contains(where: { lowered == $0 || lowered.hasPrefix($0 + "/") }) { return true }
         // External volumes: an app and its own items there may go (decided 2026-10-26), but never
         // /Volumes, a volume, its top-level folders, or another macOS installation's system,
@@ -174,11 +183,14 @@ public enum Remover {
             if parts.count < 3 { return true }
             if ["system", "library", "users", "private", "usr", "bin", "sbin"].contains(String(parts[parts.startIndex + 1])) { return true }
         }
-        let never = ["/applications", "/users", "/users/shared", "/library", "/usr", "/usr/local", "/opt", "/private", "/private/var", "/private/var/folders", "/private/tmp",
-                     "/var", "/tmp", "/etc", homePath, homePath + "/library", homePath + "/applications", homePath + "/downloads", homePath + "/.config",
-                     homePath + "/.local", homePath + "/.local/share", homePath + "/.local/state", homePath + "/.local/bin", homePath + "/bin", homePath + "/.cache",
-                     homePath + "/library/application support/steam", homePath + "/library/application support/steam/steamapps",
-                     homePath + "/library/application support/steam/steamapps/common"]
+        let never = [
+            "/applications", "/users", "/users/shared", "/library", "/usr", "/usr/local", "/opt", "/private", "/private/var", "/private/var/folders",
+            "/private/tmp",
+            "/var", "/tmp", "/etc", homePath, homePath + "/library", homePath + "/applications", homePath + "/downloads", homePath + "/.config",
+            homePath + "/.local", homePath + "/.local/share", homePath + "/.local/state", homePath + "/.local/bin", homePath + "/bin", homePath + "/.cache",
+            homePath + "/library/application support/steam", homePath + "/library/application support/steam/steamapps",
+            homePath + "/library/application support/steam/steamapps/common"
+        ]
         if never.contains(lowered) { return true }
         // The standard Library folders themselves (~/Library/Caches, /Library/LaunchDaemons, …).
         for base in [homePath + "/library", "/library"] where lowered.hasPrefix(base + "/") {

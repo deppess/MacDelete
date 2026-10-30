@@ -15,9 +15,12 @@ struct PreparedRemoval {
         sandbox: Sandbox?,
         home: URL
     ) throws(PreparationError) -> PreparedRemoval {
-        let asRoot = isRoot || (sandbox == nil && plans.contains {
-            $0.needsRoot() || $0.emptyFolders.contains(where: Remover.needsRoot)
-        })
+        let asRoot =
+            isRoot
+            || (sandbox == nil
+                && plans.contains {
+                    $0.needsRoot() || $0.emptyFolders.contains(where: Remover.needsRoot)
+                })
         let translate: (String) -> String = sandbox.map { sandbox in { sandbox.translate($0) } } ?? { $0 }
         let selected = plans.map { $0.split(isRoot: asRoot).deleting }
         let unavailable = selected.flatMap { Executor.unavailableTargets(for: $0, translate: translate) }
@@ -84,13 +87,17 @@ enum PreparationError: Error {
     func message(home: URL) -> String {
         switch self {
         case let .findings(findings):
-            "The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + findings.map { "  \(Format.path($0.path, home: home))" }.joined(separator: "\n")
+            "The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n"
+                + findings.map { "  \(Format.path($0.path, home: home))" }.joined(separator: "\n")
         case let .launchItems(items):
-            "A launch item changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + items.map(\.plist).sorted().map { "  \(Format.path($0, home: home))" }.joined(separator: "\n")
+            "A launch item changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n"
+                + items.map(\.plist).sorted().map { "  \(Format.path($0, home: home))" }.joined(separator: "\n")
         case let .receipts(receipts):
-            "The installer receipt records changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + receipts.sorted().map { "  \($0)" }.joined(separator: "\n")
+            "The installer receipt records changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n"
+                + receipts.sorted().map { "  \($0)" }.joined(separator: "\n")
         case let .emptyFolders(folders):
-            "The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n" + folders.map { "  \(Format.path($0, home: home))" }.joined(separator: "\n")
+            "The filesystem changed while preparing the deletion; nothing was deleted. Run delete again to see a fresh plan.\n"
+                + folders.map { "  \(Format.path($0, home: home))" }.joined(separator: "\n")
         }
     }
 }

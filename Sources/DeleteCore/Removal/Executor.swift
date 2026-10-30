@@ -47,7 +47,10 @@ public struct Executor {
     }
 
     /// An app and its companions (`plans[0]` is the app). Companions go first, then the app.
-    public func run(group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [], launchTargets: [[String: LaunchTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]) -> ExecutionReport {
+    public func run(
+        group plans: [RemovalPlan], targets: [[(finding: Finding, target: RemovalTarget)]], emptyTargets: [[String: RemovalTarget]] = [],
+        launchTargets: [[String: LaunchTarget]] = [], receiptTargets: [[String: ReceiptTargets]] = [], isRoot: Bool, casks: [InstalledCask]
+    ) -> ExecutionReport {
         var report = ExecutionReport()
         guard targets.count == plans.count else {
             report.stopped = "Couldn't verify the confirmed removal targets. Nothing was deleted."
@@ -86,7 +89,9 @@ public struct Executor {
             }
         }
         for index in plans.indices.reversed() {
-            let part = run(plans[index], targets: targets[index], emptyTargets: conditional[index], receiptTargets: receipts[index], isRoot: isRoot, casks: casks, launchItemsReady: true)
+            let part = run(
+                plans[index], targets: targets[index], emptyTargets: conditional[index], receiptTargets: receipts[index], isRoot: isRoot, casks: casks,
+                launchItemsReady: true)
             report.deleted += part.deleted
             report.failed += part.failed
             report.actionFailures += part.actionFailures
@@ -107,7 +112,10 @@ public struct Executor {
     }
 
     /// `targets` are the confirmed findings with the identities they had when confirmed.
-    public func run(_ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:], receiptTargets: [String: ReceiptTargets] = [:], isRoot: Bool, casks: [InstalledCask], launchItemsReady: Bool = false) -> ExecutionReport {
+    public func run(
+        _ plan: RemovalPlan, targets: [(finding: Finding, target: RemovalTarget)], emptyTargets: [String: RemovalTarget] = [:],
+        receiptTargets: [String: ReceiptTargets] = [:], isRoot: Bool, casks: [InstalledCask], launchItemsReady: Bool = false
+    ) -> ExecutionReport {
         var report = ExecutionReport()
         let targetPaths = Set(targets.map { $0.finding.path.lowercased() })
 
@@ -121,7 +129,9 @@ public struct Executor {
 
         // Stopping a launch item can't bring the app back, but one with KeepAlive may have
         // relaunched it since it was quit. Deleting a running app lets it write its files again.
-        if !launchItemsReady, !plan.launchItems.isEmpty, case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath) {
+        if !launchItemsReady, !plan.launchItems.isEmpty,
+            case let .stillRunning(names) = actions.quit(identifiers: plan.identifiers, bundlePath: plan.application.bundlePath)
+        {
             report.stopped = "\(names.joined(separator: ", ")) started again and didn't quit; nothing was deleted."
             return report
         }
@@ -180,7 +190,9 @@ public struct Executor {
                     if let error = actions.forgetPackage(package) { report.actionFailures.append("Couldn't forget receipt \(package): \(error)") }
                 }
             } else {
-                report.warnings.append("The installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", ")) need\(plan.packages.count == 1 ? "s" : "") sudo to forget.")
+                report.warnings.append(
+                    "The installer receipt\(plan.packages.count == 1 ? "" : "s") \(plan.packages.joined(separator: ", ")) need\(plan.packages.count == 1 ? "s" : "") sudo to forget."
+                )
             }
         }
         if let error = actions.unregister(plan.application.path) {
@@ -225,7 +237,9 @@ public struct Executor {
 
     /// Captures every concrete launch plist before confirmation. Keys include the domain because
     /// the same label can legitimately exist in the user and system domains.
-    public static func launchTargets(for items: [LaunchItem], translate: (String) -> String = { $0 }) -> (targets: [String: LaunchTarget], unavailable: [LaunchItem]) {
+    public static func launchTargets(for items: [LaunchItem], translate: (String) -> String = { $0 }) -> (
+        targets: [String: LaunchTarget], unavailable: [LaunchItem]
+    ) {
         var targets: [String: LaunchTarget] = [:]
         var unavailable: [LaunchItem] = []
         for item in items {

@@ -78,25 +78,35 @@ public final class LiveSystemActions: SystemActions, @unchecked Sendable {
             guard let user else { return "unknown user" }
             domain = "gui/\(user.uid)"
         }
-        guard let result = try? runner.run(executable: tools.launchctl, arguments: ["bootout", domain, item.plist], environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576) else { return "launchctl didn't run" }
+        guard
+            let result = try? runner.run(
+                executable: tools.launchctl, arguments: ["bootout", domain, item.plist], environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576)
+        else { return "launchctl didn't run" }
         // 3 (no such process), 5 (I/O error) and 113 (not found) mean it wasn't loaded: nothing to stop.
         return [0, 3, 5, 36, 113].contains(result.status) ? nil : message(result)
     }
 
     public func forgetPackage(_ identifier: String) -> String? {
-        guard let result = try? runner.run(executable: tools.pkgutil, arguments: ["--forget", identifier], environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576) else { return "pkgutil didn't run" }
+        guard
+            let result = try? runner.run(
+                executable: tools.pkgutil, arguments: ["--forget", identifier], environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576)
+        else { return "pkgutil didn't run" }
         return result.status == 0 ? nil : message(result)
     }
 
     public func resetPrivacy(_ identifier: String) -> String? {
         let (command, arguments) = asUser(tools.tccutil, ["reset", "All", identifier])
-        guard let result = try? runner.run(executable: command, arguments: arguments, environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576) else { return "tccutil didn't run" }
+        guard let result = try? runner.run(executable: command, arguments: arguments, environment: baseEnvironment, timeout: 30, outputLimit: 1_048_576) else {
+            return "tccutil didn't run"
+        }
         return result.status == 0 ? nil : message(result)
     }
 
     public func unregister(_ appPath: String) -> String? {
         let (command, arguments) = asUser(tools.lsregister, ["-u", appPath])
-        guard let result = try? runner.run(executable: command, arguments: arguments, environment: baseEnvironment, timeout: 60, outputLimit: 1_048_576) else { return "lsregister didn't run" }
+        guard let result = try? runner.run(executable: command, arguments: arguments, environment: baseEnvironment, timeout: 60, outputLimit: 1_048_576) else {
+            return "lsregister didn't run"
+        }
         return result.status == 0 ? nil : message(result)
     }
 
@@ -113,7 +123,8 @@ public final class LiveSystemActions: SystemActions, @unchecked Sendable {
     }
 
     private func message(_ result: CommandResult) -> String {
-        let text = (String(decoding: result.stderr, as: UTF8.self) + "\n" + String(decoding: result.stdout, as: UTF8.self)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (String(decoding: result.stderr, as: UTF8.self) + "\n" + String(decoding: result.stdout, as: UTF8.self)).trimmingCharacters(
+            in: .whitespacesAndNewlines)
         return text.isEmpty ? "exit status \(result.status)" : text.terminalText
     }
 }
