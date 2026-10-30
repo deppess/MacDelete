@@ -122,20 +122,57 @@ public struct RemovalPlan: Sendable {
     /// `identities` is captured after the final plan and before confirmation. It binds a sudo
     /// rerun to the exact filesystem objects, ownership and modes the user reviewed.
     public static func fingerprint(_ plans: [RemovalPlan], identities: [String: FileIdentity] = [:]) -> String {
-        var text = ""
+        var encoder = ApprovalFingerprintEncoder()
+        encoder.string("macdelete.approval-fingerprint")
+        encoder.integer(1)
+        encoder.integer(plans.count)
         for plan in plans {
-            text += plan.application.path + "\u{0}"
-            text += plan.selected().map(\.path).sorted().joined(separator: "\u{0}") + "\u{1}"
-            text += plan.packages.sorted().joined(separator: "\u{0}") + "\u{1}"
-            text += plan.launchItems.map(\.plist).sorted().joined(separator: "\u{0}") + "\u{1}"
-            text += plan.emptyFolders.sorted().joined(separator: "\u{0}") + "\u{1}" + (plan.homebrewCask ?? "") + "\u{2}"
+            encoder.string(plan.application.path)
+            encoder.strings(plan.selected().map(\.path).sorted())
+            encoder.strings(plan.packages.sorted())
+            encoder.strings(plan.launchItems.map(\.plist).sorted())
+            encoder.strings(plan.emptyFolders.sorted())
+            encoder.optionalString(plan.homebrewCask)
         }
+        encoder.integer(identities.count)
         for (key, identity) in identities.sorted(by: { $0.key < $1.key }) {
-            text += key + "\u{0}\(identity.device):\(identity.inode):\(identity.type):\(identity.owner):\(identity.group):\(identity.permissions)\u{1}"
+            encoder.string(key)
+            encoder.integer(identity.device)
+            encoder.integer(identity.inode)
+            encoder.integer(identity.type)
+            encoder.integer(identity.owner)
+            encoder.integer(identity.group)
+            encoder.integer(identity.permissions)
         }
         // This crosses a privilege boundary, so use a collision-resistant digest rather than a
         // compact non-cryptographic checksum. It is still not a secret or an authorization token.
-        return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: encoder.data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Canonical length-prefixed encoding for data bound to the sudo approval fingerprint.
+private struct ApprovalFingerprintEncoder {
+    private(set) var data = Data()
+
+    mutating func integer<T: FixedWidthInteger>(_ value: T) {
+        var encoded = UInt64(truncatingIfNeeded: value).bigEndian
+        withUnsafeBytes(of: &encoded) { data.append(contentsOf: $0) }
+    }
+
+    mutating func string(_ value: String) {
+        let bytes = Data(value.utf8)
+        integer(bytes.count)
+        data.append(bytes)
+    }
+
+    mutating func optionalString(_ value: String?) {
+        integer(value == nil ? 0 : 1)
+        if let value { string(value) }
+    }
+
+    mutating func strings(_ values: [String]) {
+        integer(values.count)
+        values.forEach { string($0) }
     }
 }
 
