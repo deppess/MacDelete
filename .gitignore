@@ -1,6 +1,20 @@
 .build/
 .swiftpm/
-.claude/
 *.xcodeproj
 xcuserdata/
+
+# Local tooling
+.claude/
+.cursor/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# OS and secrets
 .DS_Store
+.env
+.env.*
+
+# Local notes
+HANDOFF.md
+PLAN.md

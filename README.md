@@ -6,6 +6,8 @@ It is built from source for the Mac on which it is installed: Apple-silicon inst
 
 Deletion is permanent. Nothing goes to the Trash and there is no undo; the plan shown before the question lists every file deletion and system action. Each target is identity-checked immediately before mutation. A changed, ambiguous, protected, or unreadable target is left alone.
 
+Source: [Codeberg](https://codeberg.org/deppes/MacDelete) (primary) · [GitHub](https://github.com/deppess/MacDelete) (mirror)
+
 ## Usage
 
 ```sh
@@ -61,6 +63,8 @@ Scripts/testapps validate                   # every disposable case, including t
 Scripts/testapps check                     # after deleting them: anything left behind, and what must survive
 Scripts/testapps clean                     # then: remove the disposable-app builds
 ```
+
+## License
 
 GPL-3.0-or-later. See [`COPYING`](COPYING) for the license, [`NOTICE`](NOTICE) for code taken
 from Sift and Mole, [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and safety rules, and

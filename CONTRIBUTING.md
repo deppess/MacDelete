@@ -14,7 +14,7 @@ Scripts/sandbox run "App Name" -y
 Scripts/testapps validate
 ```
 
-Do not weaken `.claude/hooks/guard-delete.py`. A destructive run must retain these guarantees:
+A destructive run must retain these guarantees:
 
 - every filesystem and system action is rendered before confirmation;
 - every selected filesystem object is identity-checked immediately before mutation;
@@ -72,6 +72,3 @@ If any answer is unclear, refuse the directive rather than guessing.
   removal.
 - `Sources/DeleteCore/Output`: text, JSON, completion, and terminal-safe rendering.
 - `Tests/DeleteCoreTests`: fake-root unit and integration tests that never mutate the host.
-
-Read `HANDOFF.md` and `CLAUDE.md` before changing the removal model. They record the project’s
-deliberate safety boundaries and validation history.
