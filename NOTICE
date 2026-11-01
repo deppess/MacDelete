@@ -1,8 +1,9 @@
-macdelete is GPL-3.0-or-later.
+macdelete is AGPL-3.0-or-later. Portions adapted from Mole remain GPL-3.0, combined under
+section 13 of the GNU GPL and AGPL.
 
 Sources/DeleteCore/System/CommandRunner.swift, System/Concurrent.swift,
 Output/TerminalSanitizer.swift, Output/TableFormatter.swift, and the application scan in
-Discovery/AppScanner.swift come from Sift (~/Projects/sift), the same author's GPL-3.0-or-later
+Discovery/AppScanner.swift come from Sift (~/Projects/sift), the same author's AGPL-3.0-or-later
 macOS inventory tool.
 
 The removable-Apple-app list, the security-vendor list, and the generic-word list in
