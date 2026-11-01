@@ -15,7 +15,7 @@ public struct Inventory: Sendable {
         let receiptsTask = Concurrent { PackageReceipts.scan(directory: roots.receipts, runner: runner, lsbom: roots.tools.lsbom) }
         // Game folders that are their own bundle (Stardew Valley) never have a Spotlight size and
         // take the longest to walk (11,000 files), so they're walked while the scan runs.
-        let folderBundleSizes: Concurrent<[String: Int64]>? = sizes ? Concurrent { folderBundleSizes(roots: roots) } : nil
+        let folderBundleSizesTask: Concurrent<[String: Int64]>? = sizes ? Concurrent { folderBundleSizes(roots: roots) } : nil
         let scan = AppScanner(roots: roots, runner: runner).scan()
         timing?.mark("scan")
         let caskScan = casksTask.value
@@ -30,7 +30,7 @@ public struct Inventory: Sendable {
             return application
         }
         if sizes {
-            let early = folderBundleSizes?.value ?? [:]
+            let early = folderBundleSizesTask?.value ?? [:]
             for index in applications.indices where applications[index].size == nil {
                 if let size = early[URL(filePath: applications[index].bundlePath).standardizedFileURL.path.lowercased()] { applications[index].size = size }
             }
