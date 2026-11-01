@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import DeleteCore
 
-/// One test per evidence rule in CLAUDE.md not already covered by FinderTests.
+/// One test per evidence rule not already covered by FinderTests.
 final class RuleTests: XCTestCase {
     func makeExample(_ system: FakeSystem) throws -> URL {
         let bundle = try system.makeApp("Example.app", metadata: ["CFBundleIdentifier": "com.example.app", "CFBundleExecutable": "Example"])

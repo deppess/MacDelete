@@ -41,9 +41,19 @@ Permanently delete 9 items (2.7 GB)? [y/N]
 
 ## How files are found
 
-Only fixed locations are read; the disk is never crawled. Items named by the app's bundle identifier (or one of its embedded helpers', extensions', or login items'), its entitlement app groups, its installer-package receipt, launch items that run it, browser native-messaging hosts and command-line links pointing into it, and plug-ins it installed into the Library (QuickLook, screen savers, audio plug-ins, …) are selected. A helper several apps of a suite embed (Office's error reporter) stays until the last of them goes. Same-named app artifacts (in Application Support, Caches, Logs, a same-named folder in the home directory, `~/.config`, `~/.local/share`, a regular executable in `~/.local/bin` or `~/bin`, `/Users/Shared`, a vendor's folder such as `JetBrains/IntelliJIdea2026.2`, …) are visibly labeled as name-derived evidence and included in the single confirmation. Some may hold your own files; review the complete plan before answering. Some things are only pointed out: iCloud and cloud-storage folders, a Dock tile, kernel extensions and audio drivers. Anything another installed app also claims is kept and the reason shown. `CLAUDE.md` lists every rule and `PLAN.md` the research behind them.
+Only fixed locations are read; the disk is never crawled. Items named by the app's bundle identifier (or one of its embedded helpers', extensions', or login items'), its entitlement app groups, its installer-package receipt, launch items that run it, browser native-messaging hosts and command-line links pointing into it, and plug-ins it installed into the Library (QuickLook, screen savers, audio plug-ins, …) are selected. A helper several apps of a suite embed (Office's error reporter) stays until the last of them goes. Same-named app artifacts (in Application Support, Caches, Logs, a same-named folder in the home directory, `~/.config`, `~/.local/share`, a regular executable in `~/.local/bin` or `~/bin`, `/Users/Shared`, a vendor's folder such as `JetBrains/IntelliJIdea2026.2`, …) are visibly labeled as name-derived evidence and included in the single confirmation. Some may hold your own files; review the complete plan before answering. Some things are only pointed out: iCloud and cloud-storage folders, a Dock tile, kernel extensions and audio drivers. Anything another installed app also claims is kept and the reason shown.
 
 What is refused: apps that are part of macOS, security and device-management agents (use the vendor's uninstaller), and MacPorts apps (use `port uninstall`). Running apps are asked to quit first. For a Homebrew cask, `delete` reads the installed receipt and removes only the concrete artifacts it can reproduce under its own identity-checked deletion rules: app and suite bundles, Caskroom payloads, command links, `zap` paths, bounded declarative `uninstall delete`/`rmdir` entries, and `launchctl` labels only when they resolve to an on-disk LaunchAgent or LaunchDaemon plist that the plan shows and stops first. Declared `quit` identifiers must belong to the app or an embedded component; matching package-receipt identifiers are shown and forgotten through the normal sudo-gated receipt action. Root-owned paths remain in the plan and trigger the normal sudo revalidation. Casks with scripts, unresolved services, generated files, unsafe package patterns, or unknown directives are refused until `delete` has an equally bounded implementation. Without Full Disk Access some folders can't be read; the plan then says so instead of reporting nothing.
+
+## Install
+
+Requires macOS 15 or later and Swift 6.
+
+```sh
+git clone https://codeberg.org/deppes/MacDelete.git
+cd MacDelete
+Scripts/install
+```
 
 ## Build and test
 

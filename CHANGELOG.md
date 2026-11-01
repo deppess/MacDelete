@@ -4,6 +4,10 @@ All notable changes to `delete` are documented here.
 
 ## 2.0.1 — Unreleased
 
+### Licensing
+
+- Licensed under AGPL-3.0-or-later instead of GPL-3.0-or-later.
+
 ### Safety
 
 - Captures each selected deletion, launch item, installer receipt, and empty-folder target in one
